@@ -370,7 +370,7 @@ COMMAND_HELP = {
         "Animate a new explanation",
         "unfold create --brief brief.json --grant grant.json --request-id 0123456789abcdef0123456789abcdef",
         "Operation record; completed status includes project_id and revision_id.",
-        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request.",
+        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request. OpenAI incomplete responses stop with PROVIDER_INCOMPLETE; internal continuation and raised-token retries are blocked. model_call events count gate calls; provider_attempt events count underlying OpenAI attempts. Up to four private rejected-author diagnostics (64 KiB each) remain in the operation directory, outside exports; delete them when no longer needed.",
     ),
     "revise": (
         "Apply a change while retaining the earlier composition",

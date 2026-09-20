@@ -14,7 +14,7 @@ final takeaway. Use whitespace, readable typography, a restrained palette and
 clear labels. Keep text short. Do not invent product features or evidence.
 The illustrative explanation is not a recording of actual operation timings.
 
-Call production with action and payload (a JSON string):
+Call production with action and payload (a typed Scene object for author; a JSON string for other actions):
 - inspect: `{}` returns current scene, prior/base scene and remaining allowances.
 - author: a complete Scene JSON object validated against the attached schema.
   Replaces the working scene and invalidates all render and inspection evidence.
@@ -56,6 +56,25 @@ Full-canvas paths (x=0,y=0,width=1280,height=720) let points use screen coordina
 Translation x/y moves the whole shape rigidly; it does not change its local points.
 SVG/CSS screen y increases downward. A mathematical upward vector needs decreasing y.
 Keep arrowheads inset from SVG bounds. Use thin, dim grid lines behind bright vectors.
+
+A tween can carry `points` to morph a path's outline in place, interpolating every
+point toward a new local list over the tween's duration. It requires exactly the
+same number of points as the element declares, so plan both the starting and
+ending point lists together; a mismatched count is rejected rather than guessed at.
+This is the alternative to fading one shape out while fading another in, which
+can leave the frame empty in between if poorly scheduled. It does not work on a path with `arrow_end`,
+since the arrowhead is computed once from the final two authored points and would
+point at stale geometry after a morph.
+
+Successive points tweens start from the preceding destination. Points tweens on the
+same path must not overlap; point counts and local bounds must remain unchanged.
+For substitutions that need separate shapes, bring the incoming shape to opacity 1
+BEFORE starting the outgoing shape's fade. Hold their overlap so the subject never
+vanishes between beats; sample immediately before, during and after each handoff.
+Intentional empty openings/endings are allowed, so a blank frame alone is not a defect.
+Tween scale is bounded to 0.1..3. Use opacity 0 to disappear, not a scale below 0.1.
+Validation errors are repair feedback, not permission to relax the schema. Re-author
+within the remaining budget; invalid scenes do not replace the current valid source.
 
 For circular connections, `kind:"arc"` uses the inscribed circle of width/height,
 `start_angle` in degrees (0 right, 90 down, 180 left, -90 up) and positive

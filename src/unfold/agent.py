@@ -27,6 +27,49 @@ class Finished(BaseException):
     pass
 
 
+def bound_openai(provider, owner):
+    """Guard the pinned provider's non-streaming request boundary.
+
+    Its truncation continuations bypass max_retries. Stop incomplete responses
+    before that recovery loop, and fail closed if it attempts another request.
+    This private seam must be reverified whenever the provider pin changes.
+    """
+    create = getattr(provider, "_create_response", None)
+    if not callable(create):
+        raise UnfoldError("PROVIDER_CONFIGURATION", "OpenAI request boundary is unavailable.")
+    provider.use_streaming = False
+    attempted_call = None
+
+    async def bounded(params):
+        nonlocal attempted_call
+        tokens = params.get("max_output_tokens")
+        if (
+            attempted_call == owner.model_calls
+            or not isinstance(tokens, int)
+            or not 0 < tokens <= owner.grant.max_response_tokens
+            or params.get("model") != owner.grant.model
+        ):
+            owner.fatal = UnfoldError("RESOURCE_LIMIT", "Provider request exceeded its grant.")
+            raise owner.fatal
+        attempted_call = owner.model_calls
+        owner.event("provider_attempt", {
+            "model_call": owner.model_calls,
+            "provider": "openai",
+            "max_response_tokens": tokens,
+        })
+        response = await create(params)
+        if getattr(response, "status", None) == "incomplete":
+            owner.fatal = UnfoldError(
+                "PROVIDER_INCOMPLETE", "Provider response was incomplete; no retry was made.",
+                "Inspect the failed operation. Use a simpler brief or explicitly authorize "
+                "a new request with a larger response allowance.",
+            )
+            raise owner.fatal
+        return response
+
+    provider._create_response = bounded
+
+
 def disclosure_size(value):
     """Count encoded image payloads separately, including retained history on retries."""
     image_bytes = 0
@@ -125,9 +168,20 @@ class Gate:
             }
         )
         try:
-            response = await self.inner.complete(request, **kwargs)
-        except Exception:
-            owner.fatal = UnfoldError(
+            response = await self.inner.complete(request, **{**kwargs, "model": owner.grant.model})
+        except Exception as exc:
+            import traceback
+
+            # Record code locations, never exception text or request/image bytes.
+            owner.event("provider_error", {
+                "exception": type(exc).__name__,
+                "frames": [
+                    {"file": Path(frame.filename).name, "line": frame.lineno,
+                     "function": frame.name}
+                    for frame in traceback.extract_tb(exc.__traceback__)[-8:]
+                ],
+            })
+            owner.fatal = owner.fatal or UnfoldError(
                 "PROVIDER_ERROR",
                 "The configured provider failed the request.",
                 "Check model availability and credentials. No automatic retry was made.",
@@ -172,9 +226,16 @@ async def execute(owner):
     }
 
     async def turn(ctx):
-        prepared = copy.copy(engine.session)
-        prepared.mount_plan = copy.deepcopy(prepared.mount_plan)
-        prepared.mount_plan.update(providers=[entry], tools=[], agents={}, hooks=[])
+        from amplifier_foundation import Bundle
+
+        # A copied PreparedBundle retains its resolver's already-activated
+        # provider paths; changing mount_plan alone does not change the source.
+        # Prepare the scoped plan so the declared provider pin is resolved.
+        prepared = await Bundle(
+            name="unfold-production",
+            session=copy.deepcopy(engine.session.mount_plan["session"]),
+            providers=[entry],
+        ).prepare(strict=True)
         with tempfile.TemporaryDirectory(prefix="unfold-agent-") as directory:
             session = await prepared.create_session(
                 session_id=owner.request["operation_id"], session_cwd=Path(directory)
@@ -186,6 +247,8 @@ async def execute(owner):
                         "PROVIDER_CONFIGURATION", "Expected exactly one configured provider."
                     )
                 for name, provider in list(providers.items()):
+                    if owner.grant.provider == "openai":
+                        bound_openai(provider, owner)
                     await session.coordinator.mount("providers", Gate(provider, owner), name=name)
                 tool = owner.tool()
                 await session.coordinator.mount("tools", tool, name=tool.name)

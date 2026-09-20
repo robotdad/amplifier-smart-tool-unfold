@@ -1,12 +1,13 @@
 """Model-facing production capabilities and executable submission boundaries."""
 
 import json
+import os
 import threading
 from pathlib import Path
 
 from .backend import Backend
 from .models import Grant, Scene, UnfoldError
-from .store import Store, digest, uid
+from .store import Store, digest, uid, write_all
 
 
 class Production:
@@ -24,6 +25,7 @@ class Production:
         self.calls = self.model_calls = self.renders = self.frames = 0
         self.text_bytes = self.image_bytes = 0
         self.result = self.fatal = None
+        self.rejected_authors = 0
         self.lock = threading.Lock()
         reference = request.get("reference")
         if reference:
@@ -88,6 +90,32 @@ class Production:
     def event(self, kind, data):
         self.store.event(kind, self.request["operation_id"], data)
 
+    def reject_author(self, data, exc):
+        """Keep at most four private 64 KiB diagnostics, outside exports/events."""
+        if self.rejected_authors >= 4:
+            return
+        self.rejected_authors += 1
+        encoded = json.dumps(data, ensure_ascii=False).encode()
+        record = {
+            "action": "author",
+            "payload_bytes": len(encoded),
+            "truncated": len(encoded) > 60000,
+            "payload_excerpt": encoded[:60000].decode("utf-8", errors="ignore"),
+            "error": str(exc)[:2000],
+        }
+        # Bound serialized bytes too (escaping can expand an excerpt).
+        while len(json.dumps(record).encode()) > 65536:
+            record["payload_excerpt"] = record["payload_excerpt"][:len(record["payload_excerpt"]) // 2]
+            record["truncated"] = True
+        relative = Path("operations") / self.request["operation_id"] / (
+            f"rejected-author-{self.rejected_authors}.json"
+        )
+        with self.store.open_relative(relative, os.O_WRONLY | os.O_CREAT | os.O_EXCL) as fd:
+            write_all(fd, json.dumps(record).encode())
+        self.event("author_rejected", {
+            "diagnostic": relative.name, "truncated": record["truncated"],
+        })
+
     def call(self, action, payload):
         with self.lock:
             if self.result is not None:
@@ -101,7 +129,7 @@ class Production:
                 self.fatal = UnfoldError("RESOURCE_LIMIT", "Tool allowance exhausted.")
                 raise self.fatal
             self.event("production", {"action": action, "call": self.calls})
-            data = json.loads(payload)
+            data = json.loads(payload) if isinstance(payload, str) else payload
             if action == "inspect":
                 return {
                     "scene": self.scene.model_dump() if self.scene else None,
@@ -132,9 +160,13 @@ class Production:
                         if key in data:
                             scene_data[key] = data[key]
                     data = scene_data
-                scene = Scene.model_validate(data)
-                if scene.duration != self.request["brief"]["duration"]:
-                    raise ValueError("Preserve the requested duration exactly.")
+                try:
+                    scene = Scene.model_validate(data)
+                    if scene.duration != self.request["brief"]["duration"]:
+                        raise ValueError("Preserve the requested duration exactly.")
+                except ValueError as exc:
+                    self.reject_author(data, exc)
+                    raise
                 resources = self.request.get("resources", {})
                 for asset in resources.values():
                     if digest(Path(asset["path"])) != asset["sha256"]:
@@ -275,12 +307,21 @@ class Production:
                         ],
                     },
                     "payload": {
-                        "type": "string",
-                        "description": "JSON object for the chosen action.",
+                        "anyOf": [
+                            {"$ref": "#/$defs/Scene"},
+                            {"type": "string"},
+                        ],
+                        "description": "For author, a typed Scene object. Other actions use a JSON string. Legacy author strings remain accepted.",
                     },
                 },
                 "required": ["action", "payload"],
                 "additionalProperties": False,
+                "$defs": {
+                    **Scene.model_json_schema().get("$defs", {}),
+                    "Scene": {
+                        k: v for k, v in Scene.model_json_schema().items() if k != "$defs"
+                    },
+                },
             }
 
             async def execute(self, input):

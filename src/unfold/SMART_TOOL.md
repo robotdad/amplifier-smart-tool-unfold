@@ -11,6 +11,7 @@ use_cases:
   - Review, rename and export saved outputs without a model
 platforms:
   - macos
+  - linux
 requires:
   - name: Node.js, HyperFrames 0.8.33 and GSAP 3.14.2
     purpose: Render existing compositions; not needed for help or retained-state reads.
@@ -20,13 +21,17 @@ requires:
     purpose: Decode video observations and inspect encoded media.
     install: https://ffmpeg.org/download.html
     optional: true
+  - name: Linux system libraries (unzip and Chromium dependencies)
+    purpose: On Ubuntu 24.04 and similar distributions, HyperFrames requires a zip archiver and headless Chromium shared libraries for rendering.
+    install: https://github.com/robotdad/amplifier-smart-tool-unfold/blob/main/src/unfold/SMART_TOOL.md#linux-rendering
+    optional: true
 ---
 # Unfold
 
 The Python library is the product. The CLI and optional loopback dashboard adapt
 the same operations. Compositions are 1280×720 at 30 fps, lasting 5–60 seconds.
 The authoring profile supports text, cards, paths, polygons, circles, arcs, image
-assets, stroke drawing and camera motion. An embedded Amplifier Agent creates and
+assets, stroke drawing, matching-point path morphs and camera motion. An embedded Amplifier Agent creates and
 refines compositions; deterministic operations manage assets, packs and delivery.
 
 Studio review includes full-width Single, synchronized Compare, retained drafts,
@@ -70,6 +75,17 @@ manifest. HyperFrames may prepare its Chromium binary on the first render. Creat
 calls do not run npm or initiate authentication. Amplifier Agent v0.17.0 and provider
 module revisions are pinned; first Agent preparation can fetch its runtime modules.
 Production guidance is packaged. No private skills directory is required.
+
+### Linux rendering
+
+On Ubuntu 24.04, install `unzip` and Chromium's shared libraries before rendering:
+
+```sh
+sudo apt-get install unzip libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxkbcommon0 libatspi2.0-0t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64
+```
+
+Package names vary on other Linux distributions. These rendering dependencies are
+not needed for help or retained-state inspection.
 
 ## Library and authority
 

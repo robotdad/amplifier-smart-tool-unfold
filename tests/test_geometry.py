@@ -61,6 +61,95 @@ def test_camera_timing_and_circular_arc():
                       dict(at=2, duration=1, center_x=200, center_y=200, zoom=1)])
 
 
+def _morphable(**kwargs):
+    return Element(
+        id="p",
+        kind="path",
+        x=0,
+        y=0,
+        width=200,
+        height=200,
+        points=[(10, 10), (50, 50), (100, 100)],
+        color="#b59aff",
+        opacity=1,
+        **kwargs,
+    )
+
+
+def test_points_tween_morphs_a_matching_path_and_validates():
+    path = _morphable()
+    Scene(
+        title="Morph",
+        duration=5,
+        explanation="Triangle reshapes",
+        elements=[path],
+        tweens=[dict(target="p", at=0, duration=1, points=[(20, 20), (60, 60), (110, 110)])],
+    )
+
+
+def test_points_tween_rejects_a_mismatched_point_count():
+    path = _morphable()
+    with pytest.raises(ValueError, match="exactly as many points"):
+        Scene(
+            title="Mismatched",
+            duration=5,
+            explanation="Wrong count",
+            elements=[path],
+            tweens=[dict(target="p", at=0, duration=1, points=[(20, 20), (60, 60)])],
+        )
+
+
+def test_points_tween_rejects_a_non_path_target():
+    text = Element(id="t", kind="text", x=0, y=0, width=100, height=50, text="hi")
+    with pytest.raises(ValueError, match="only target a path"):
+        Scene(
+            title="Non-path",
+            duration=5,
+            explanation="Wrong kind",
+            elements=[text],
+            tweens=[dict(target="t", at=0, duration=1, points=[(0, 0), (10, 10), (20, 20)])],
+        )
+
+
+def test_points_tween_rejects_an_out_of_bounds_point():
+    path = _morphable()
+    with pytest.raises(ValueError, match="local coordinates inside"):
+        Scene(
+            title="Out of bounds",
+            duration=5,
+            explanation="Escapes bounds",
+            elements=[path],
+            tweens=[dict(target="p", at=0, duration=1, points=[(10, 10), (60, 60), (500, 500)])],
+        )
+
+
+def test_points_tween_rejects_an_arrowed_target():
+    arrowed = _morphable(arrow_end=True)
+    with pytest.raises(ValueError, match="arrowhead"):
+        Scene(
+            title="Arrowed morph",
+            duration=5,
+            explanation="Cannot morph an arrow",
+            elements=[arrowed],
+            tweens=[dict(target="p", at=0, duration=1, points=[(20, 20), (60, 60), (110, 110)])],
+        )
+
+
+def test_overlapping_points_tweens_on_the_same_target_are_rejected():
+    path = _morphable()
+    with pytest.raises(ValueError, match="must not overlap"):
+        Scene(
+            title="Overlap",
+            duration=5,
+            explanation="Two morphs collide",
+            elements=[path],
+            tweens=[
+                dict(target="p", at=0, duration=2, points=[(20, 20), (60, 60), (110, 110)]),
+                dict(target="p", at=1, duration=2, points=[(30, 30), (70, 70), (120, 120)]),
+            ],
+        )
+
+
 @pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs renderer")
 def test_encoded_camera_centers_world_and_preserves_circle(tmp_path):
     backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
@@ -157,3 +246,66 @@ def test_encoded_vector_draw_and_rigid_translation(tmp_path):
     assert near(after.getpixel((350, 450)), (240, 199, 110))
     assert near(after.getpixel((830, 280)), (240, 199, 110))
     assert metadata["duration"] == 5
+
+
+@pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs renderer")
+def test_points_tween_morphs_a_path_outline_in_place(tmp_path):
+    backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
+    shape = Element(
+        id="morph",
+        kind="path",
+        x=100,
+        y=100,
+        width=200,
+        height=200,
+        points=[(0, 0), (80, 0), (80, 80), (0, 80)],
+        closed=True,
+        color="#f0c76e",
+        fill="#f0c76e",
+        fill_opacity=1,
+        opacity=1,
+    )
+    scene = Scene(
+        title="Points morph",
+        duration=5,
+        explanation="A square morphs into a square in the opposite corner",
+        elements=[shape],
+        tweens=[
+            # Deliberately out of order: return must start at the prior destination.
+            dict(target="morph", at=3, duration=1, ease="none",
+                 points=[(0, 0), (80, 0), (80, 80), (0, 80)]),
+            dict(
+                target="morph",
+                at=1,
+                duration=2,
+                ease="none",
+                points=[(120, 120), (200, 120), (200, 200), (120, 200)],
+            )
+        ],
+    )
+    source = tmp_path / "source"
+    backend.author(scene, source)
+    backend.render(source, tmp_path / "morph.mp4")
+    frames = backend.frames(tmp_path / "morph.mp4", [0.5, 2, 3, 3.5, 4.5], tmp_path / "frames")
+    before, midpoint, after, returning, restored = [Image.open(f["path"]).convert("RGB") for f in frames]
+
+    def lit(image, x, y):
+        return sum(image.getpixel((x, y))) > 250
+
+    # Local (40,40): inside the FROM square only.
+    assert lit(before, 140, 140)
+    assert not lit(midpoint, 140, 140)
+    assert not lit(after, 140, 140)
+    # Local (100,100): inside only the interpolated midpoint quad (60-140, 60-140).
+    assert not lit(before, 200, 200)
+    assert lit(midpoint, 200, 200)
+    assert not lit(after, 200, 200)
+    # Local (160,160): inside the TO square only.
+    assert not lit(before, 260, 260)
+    assert not lit(midpoint, 260, 260)
+    assert lit(after, 260, 260)
+
+    assert lit(returning, 200, 200)
+    assert not lit(returning, 140, 140)
+    assert lit(restored, 140, 140)
+    assert not lit(restored, 260, 260)

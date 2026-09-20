@@ -165,8 +165,8 @@ class Backend:
             )
         lines = []
         for tween in scene.tweens:
-            props = tween.model_dump(exclude_none=True, exclude={"target", "at", "draw"})
-            if tween.draw is None or set(props) - {"duration", "ease"}:
+            props = tween.model_dump(exclude_none=True, exclude={"target", "at", "draw", "points"})
+            if (tween.draw is None and tween.points is None) or set(props) - {"duration", "ease"}:
                 lines.append(f'tl.to("#{tween.target}",{json.dumps(props)},{tween.at});')
             if tween.draw is not None:
                 trace = {
@@ -195,6 +195,17 @@ class Backend:
                     lines.append(
                         f'tl.set("#{tween.target} .head",{{opacity:{1 if tween.draw == 1 else 0}}},{tween.at + tween.duration if tween.draw == 1 else tween.at});'
                     )
+        # GSAP owns interpolation and seek/reverse state; each successive morph
+        # starts at the preceding destination, even for out-of-order input.
+        for tween in sorted((t for t in scene.tweens if t.points is not None), key=lambda t: t.at):
+            element = next(e for e in scene.elements if e.id == tween.target)
+            path = "M " + " L ".join(f"{x} {y}" for x, y in tween.points)
+            props = {
+                "attr": {"d": path + (" Z" if element.closed else "")},
+                "duration": tween.duration,
+                "ease": tween.ease,
+            }
+            lines.append(f'tl.to("#{tween.target} .trace",{json.dumps(props)},{tween.at});')
         body = "".join(elements)
         if scene.camera:
             body = (
