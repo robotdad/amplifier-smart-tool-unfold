@@ -1,6 +1,6 @@
 # Unfold
 
-[Website source and preview instructions](site/README.md)
+[Website](https://robotdad.github.io/amplifier-smart-tool-unfold/)
 
 **Make an idea clear through motion.**
 
