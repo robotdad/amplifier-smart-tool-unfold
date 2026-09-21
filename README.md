@@ -4,7 +4,7 @@
 
 **Make an idea clear through motion.**
 
-![Unfold’s review dashboard showing From spark to system: luminous orbital geometry and the closing Make ideas move title.](docs/images/unfold-studio.png)
+![Describe an idea to your agent, see what Unfold makes, and refine it together: a neural-network explanation and the real motion-review workspace.](docs/images/unfold-demo.gif)
 
 Unfold helps you and your agent turn technical explanations into animations.
 Describe a concept, a flow through your system, or the handoff you want people to
@@ -96,9 +96,10 @@ pack does not silently change earlier work.
 
 ## What to expect
 
-The image above is the real review dashboard showing **From spark to system**,
-a 28-second promotional animation created and rendered through Unfold’s embedded
-agent. It is a product screenshot, not an interface mockup.
+The 20-second demo above combines a neural-network explanation with the real
+Unfold dashboard playing **From spark to system**. Both animations were made
+through Unfold. The captions describe the workflow with your agent: describe
+the idea, review the result, and refine it together.
 
 Unfold makes compositions from one frame (1/30 second) through 60 seconds at
 1280×720 and 30 fps, including 2- and 2.5-second identity bumpers. Durations round

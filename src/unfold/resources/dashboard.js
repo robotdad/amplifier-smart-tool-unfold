@@ -843,6 +843,9 @@ function preview(a, url) {
     e = E("video");
     e.controls = true;
     e.preload = "metadata";
+    e.addEventListener("error", () => {
+      e.replaceWith(E("div", "Video preview unavailable in this browser", "empty asset-preview"));
+    });
     setSource(e, url);
   } else {
     e = E("div", a.role === "font" ? "Aa Bb Cc 123" : a.role, "empty");
@@ -858,9 +861,10 @@ function preview(a, url) {
         .catch(() => (e.textContent = "Font preview unavailable"));
     }
   }
+  e.classList.add("asset-preview");
   return e;
 }
-function assetCard(a) {
+function assetCard(a, location = "Library") {
   const card = E("div", undefined, "asset");
   card.append(
     preview(a, "/asset/" + a.id),
@@ -869,6 +873,22 @@ function assetCard(a) {
     E("small", a.integrity),
   );
   const row = E("div", undefined, "row");
+  if (a.mime?.startsWith("video/") || a.mime?.startsWith("image/")) {
+    const openPreview = button("Preview", () => {
+      const body = modal(a.name);
+      const media = preview(a, "/asset/" + a.id);
+      body.append(media);
+      if (media.tagName === "VIDEO") {
+        media.muted = true;
+        media.loop = true;
+        media.autoplay = true;
+        media.preload = "auto";
+        $("dialog").addEventListener("close", () => media.pause(), { once: true });
+      }
+    });
+    openPreview.setAttribute("aria-label", `Preview ${a.name} · ${location}`);
+    row.append(openPreview);
+  }
   row.append(
     button("Rename", () => rename(a.id, a.name)),
     button("Details", () => assetDetails(a)),
@@ -947,6 +967,19 @@ function guidanceView(guidance) {
   return body;
 }
 function drawLibrary() {
+  const selectedPack = state.packs.find((p) => p.id === packId);
+  if (selectedPack && !selectedPack.versions.includes(packVersionId))
+    packVersionId = selectedPack.current_version;
+  const nextSignature = signature({
+    packs: state.packs,
+    versions: state.versions,
+    assets: state.assets,
+    packId,
+    packVersionId,
+    identity: current()?.identity_version,
+  });
+  if (librarySignature === nextSignature) return;
+  librarySignature = nextSignature;
   $("packs").replaceChildren();
   state.packs.forEach((p) => {
     const b = button(p.name, () => {
@@ -966,7 +999,7 @@ function drawLibrary() {
     if (first) shell.append(preview(first, "/asset/" + first.id));
     $("packs").append(shell);
   });
-  $("assets").replaceChildren(...state.assets.map(assetCard));
+  $("assets").replaceChildren(...state.assets.map((a) => assetCard(a)));
   const p = state.packs.find((p) => p.id === packId);
   if (!p) {
     $("packDetail").replaceChildren(
@@ -1024,7 +1057,7 @@ function drawLibrary() {
   const gallery = E("div", undefined, "gallery");
   v.assets.forEach((id) => {
     const a = state.assets.find((a) => a.id === id);
-    if (a) gallery.append(assetCard(a));
+    if (a) gallery.append(assetCard(a, "Selected pack"));
   });
   body.append(gallery);
   const pin = current()?.identity_version;

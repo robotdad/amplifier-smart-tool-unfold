@@ -6,11 +6,11 @@
   "title": "Unfold | Amplifier Smart Tools",
   "promise": "Make an idea clear through motion.",
   "description": "Turn a technical explanation into an animation. Describe the relationships that matter, watch the result, and refine the exact moment that needs to be clearer.",
-  "image": "docs/images/unfold-studio.png",
-  "alt": "Unfold review dashboard playing the From spark to system animation with retained project and revision controls.",
-  "caption": "The real Unfold review dashboard showing From spark to system, a 28-second animation created through its embedded agent.",
-  "width": 1280,
-  "height": 720,
+  "image": "docs/images/unfold-demo-poster.png",
+  "alt": "A neural-network explanation, followed by the real Unfold workspace playing From spark to system and a zoom into its Make ideas move ending.",
+  "caption": "Describe it to your agent. Make it with Unfold. Review and refine together.",
+  "width": 1440,
+  "height": 900,
   "flow_title": "Explain it. Watch it. Make it clearer.",
   "flow_intro": "Use geometry, images, text, and movement to make a system or idea easier to understand.",
   "steps": [
@@ -51,5 +51,20 @@
     "stories",
     "showrun",
     "possibly"
-  ]
+  ],
+  "capability_demos": [
+    {
+      "id": "team-identity",
+      "eyebrow": "Also made for your team",
+      "title": "Create an identity. Share it. Make it your own.",
+      "description": "Build a visual identity for your team, then export it as an Unfold identity pack. Teammates can import its guidance and reusable assets, and remix them in their own motion ideas.",
+      "image": "docs/images/unfold-made-poster.png",
+      "video": "docs/images/unfold-made.mp4",
+      "width": 1440,
+      "height": 900,
+      "alt": "The MADE identity pack, its transparent title and corner-mark overlays composited over the Possibly demo, and the approved team bumper.",
+      "caption": "Export a team identity pack. Reuse its transparent overlays on real demo footage, then close with the matching team bumper."
+    }
+  ],
+  "video": "docs/images/unfold-demo.mp4"
 }
