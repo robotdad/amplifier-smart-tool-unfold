@@ -61,6 +61,95 @@ def test_camera_timing_and_circular_arc():
                       dict(at=2, duration=1, center_x=200, center_y=200, zoom=1)])
 
 
+def _morphable(**kwargs):
+    return Element(
+        id="p",
+        kind="path",
+        x=0,
+        y=0,
+        width=200,
+        height=200,
+        points=[(10, 10), (50, 50), (100, 100)],
+        color="#b59aff",
+        opacity=1,
+        **kwargs,
+    )
+
+
+def test_points_tween_morphs_a_matching_path_and_validates():
+    path = _morphable()
+    Scene(
+        title="Morph",
+        duration=5,
+        explanation="Triangle reshapes",
+        elements=[path],
+        tweens=[dict(target="p", at=0, duration=1, points=[(20, 20), (60, 60), (110, 110)])],
+    )
+
+
+def test_points_tween_rejects_a_mismatched_point_count():
+    path = _morphable()
+    with pytest.raises(ValueError, match="exactly as many points"):
+        Scene(
+            title="Mismatched",
+            duration=5,
+            explanation="Wrong count",
+            elements=[path],
+            tweens=[dict(target="p", at=0, duration=1, points=[(20, 20), (60, 60)])],
+        )
+
+
+def test_points_tween_rejects_a_non_path_target():
+    text = Element(id="t", kind="text", x=0, y=0, width=100, height=50, text="hi")
+    with pytest.raises(ValueError, match="only target a path"):
+        Scene(
+            title="Non-path",
+            duration=5,
+            explanation="Wrong kind",
+            elements=[text],
+            tweens=[dict(target="t", at=0, duration=1, points=[(0, 0), (10, 10), (20, 20)])],
+        )
+
+
+def test_points_tween_rejects_an_out_of_bounds_point():
+    path = _morphable()
+    with pytest.raises(ValueError, match="local coordinates inside"):
+        Scene(
+            title="Out of bounds",
+            duration=5,
+            explanation="Escapes bounds",
+            elements=[path],
+            tweens=[dict(target="p", at=0, duration=1, points=[(10, 10), (60, 60), (500, 500)])],
+        )
+
+
+def test_points_tween_rejects_an_arrowed_target():
+    arrowed = _morphable(arrow_end=True)
+    with pytest.raises(ValueError, match="arrowhead"):
+        Scene(
+            title="Arrowed morph",
+            duration=5,
+            explanation="Cannot morph an arrow",
+            elements=[arrowed],
+            tweens=[dict(target="p", at=0, duration=1, points=[(20, 20), (60, 60), (110, 110)])],
+        )
+
+
+def test_overlapping_points_tweens_on_the_same_target_are_rejected():
+    path = _morphable()
+    with pytest.raises(ValueError, match="must not overlap"):
+        Scene(
+            title="Overlap",
+            duration=5,
+            explanation="Two morphs collide",
+            elements=[path],
+            tweens=[
+                dict(target="p", at=0, duration=2, points=[(20, 20), (60, 60), (110, 110)]),
+                dict(target="p", at=1, duration=2, points=[(30, 30), (70, 70), (120, 120)]),
+            ],
+        )
+
+
 @pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs renderer")
 def test_encoded_camera_centers_world_and_preserves_circle(tmp_path):
     backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
@@ -159,6 +248,61 @@ def test_encoded_vector_draw_and_rigid_translation(tmp_path):
     assert metadata["duration"] == 5
 
 
+@pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs renderer")
+def test_points_tween_morphs_a_path_outline_in_place(tmp_path):
+    backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
+    shape = Element(
+        id="morph",
+        kind="path",
+        x=100,
+        y=100,
+        width=200,
+        height=200,
+        points=[(0, 0), (80, 0), (80, 80), (0, 80)],
+        closed=True,
+        color="#f0c76e",
+        fill="#f0c76e",
+        fill_opacity=1,
+        opacity=1,
+    )
+    scene = Scene(
+        title="Points morph",
+        duration=5,
+        explanation="A square morphs into a square in the opposite corner",
+        elements=[shape],
+        tweens=[
+            dict(
+                target="morph",
+                at=1,
+                duration=2,
+                ease="none",
+                points=[(120, 120), (200, 120), (200, 200), (120, 200)],
+            )
+        ],
+    )
+    source = tmp_path / "source"
+    backend.author(scene, source)
+    backend.render(source, tmp_path / "morph.mp4")
+    frames = backend.frames(tmp_path / "morph.mp4", [0.5, 2, 4], tmp_path / "frames")
+    before, midpoint, after = [Image.open(f["path"]).convert("RGB") for f in frames]
+
+    def lit(image, x, y):
+        return sum(image.getpixel((x, y))) > 250
+
+    # Local (40,40): inside the FROM square only.
+    assert lit(before, 140, 140)
+    assert not lit(midpoint, 140, 140)
+    assert not lit(after, 140, 140)
+    # Local (100,100): inside only the interpolated midpoint quad (60-140, 60-140).
+    assert not lit(before, 200, 200)
+    assert lit(midpoint, 200, 200)
+    assert not lit(after, 200, 200)
+    # Local (160,160): inside the TO square only.
+    assert not lit(before, 260, 260)
+    assert not lit(midpoint, 260, 260)
+    assert lit(after, 260, 260)
+
+
 def orbital(**kwargs):
     return Element(id="orbit", kind="path", x=300, y=100, width=440, height=440,
                    closed=True, opacity=1, color="#ffffff",
@@ -217,3 +361,52 @@ def test_encoded_independent_orbit_corners_and_outline(tmp_path):
     # Re-open stored source: orbit data survives the same model validation as retained work.
     import json
     assert Scene.model_validate(json.loads((source/'scene.json').read_text())) == scene
+
+
+def test_points_tween_rejects_orbit_and_nonfinite_coordinates():
+    with pytest.raises(ValueError, match="not an orbit"):
+        Scene(title="Invalid", duration=5, explanation="Orbit owns geometry",
+              elements=[orbital()], tweens=[dict(target="orbit", at=0, points=[])])
+    for value in (float("nan"), float("inf"), -float("inf")):
+        with pytest.raises(ValueError, match="finite number"):
+            Scene(title="Invalid", duration=5, explanation="Finite geometry",
+                  elements=[_morphable()], tweens=[dict(target="p", at=0,
+                      points=[(value, 10), (50, 50), (100, 100)])])
+
+
+@pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs renderer")
+def test_successive_points_tweens_seek_and_continue_from_previous_shape(tmp_path):
+    import json
+    import subprocess
+
+    backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
+    scene = Scene(title="Successive morphs", duration=5, explanation="Continuous geometry",
+                  elements=[_morphable()], tweens=[
+                      dict(target="p", at=3, duration=1, ease="none",
+                           points=[(90, 10), (130, 50), (180, 100)]),
+                      dict(target="p", at=1, duration=1, ease="none",
+                           points=[(50, 10), (90, 50), (140, 100)])])
+    source = tmp_path / "source"
+    backend.author(scene, source)
+    script = (source / "index.html").read_text().split("<script>")[-1].split("</script>")[0]
+    # Exercise the actual generated timeline and GSAP with a minimal SVG sink.
+    # Independent expectations cover unsorted input, holds, and backward/random seek.
+    harness = r'''
+const assert = require('node:assert/strict');
+const gsap = require(process.argv[1]).gsap;
+{
+const window = {};
+let outline = 'M 10 10 L 50 50 L 100 100';
+const document = {querySelector: () => ({setAttribute: (_, value) => {outline = value;}})};
+eval(process.argv[2]);
+for (const [time, x] of [[0.5,10],[1.5,30],[2.5,50],[3.5,70],[4.5,90],
+                         [1.5,30],[0,10],[4,90],[2.5,50],[3,50]]) {
+    window.__timelines.unfold.seek(time, false);
+    assert.equal(Number(outline.split(' ')[1]), x);
+}
+}
+gsap.ticker.sleep();
+'''
+    subprocess.run(["node", "-e", harness, str(source / "gsap.min.js"), script],
+                   check=True, text=True, timeout=30)
+    assert Scene.model_validate(json.loads((source / "scene.json").read_text())) == scene

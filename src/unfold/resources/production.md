@@ -57,6 +57,17 @@ Translation x/y moves the whole shape rigidly; it does not change its local poin
 SVG/CSS screen y increases downward. A mathematical upward vector needs decreasing y.
 Keep arrowheads inset from SVG bounds. Use thin, dim grid lines behind bright vectors.
 
+A tween can carry `points` to morph a path's outline in place, interpolating every
+point toward a new local list over the tween's duration. It requires exactly the
+same number of points as the element declares, so plan both the starting and
+ending point lists together; a mismatched count is rejected rather than guessed at.
+Successive morphs continue from the previous shape, including when seeking backward.
+Orbit paths use `orbit_angles` instead; `points` cannot target an orbit.
+For substitutions that need separate elements, bring the incoming element fully
+into view before fading the outgoing element, so the subject does not disappear.
+Points morphing does not support `arrow_end`: the static arrowhead would point at
+stale geometry after a morph.
+
 For circular connections, `kind:"arc"` uses the inscribed circle of width/height,
 `start_angle` in degrees (0 right, 90 down, 180 left, -90 up) and positive
 `sweep_angle` less than 360 clockwise. It supports draw, stroke and opacity, but

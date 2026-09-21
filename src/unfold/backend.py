@@ -198,8 +198,23 @@ class Backend:
                 "e.querySelectorAll('.orbit-marker').forEach((m,i)=>{"
                 "m.setAttribute('cx',p[i][0]);m.setAttribute('cy',p[i][1]);});}"
             )
+        morph_targets = {t.target for t in scene.tweens if t.points is not None}
+        for e in scene.elements:
+            if e.id not in morph_targets:
+                continue
+            coords = {f"{axis}{i}": value for i, point in enumerate(e.points)
+                      for axis, value in zip(("x", "y"), point)}
+            closing = json.dumps(" Z" if e.closed else "")
+            lines.append(
+                f"const morph_{e.id}={json.dumps(coords)};"
+                f"function morph_update_{e.id}(){{"
+                f"const p=Array.from({{length:{len(e.points)}}},(_,i)=>"
+                f"[morph_{e.id}['x'+i],morph_{e.id}['y'+i]]);"
+                f"document.querySelector('#{e.id} .trace').setAttribute('d',"
+                f"'M '+p.map(v=>v.join(' ')).join(' L ')+{closing});}}"
+            )
         for tween in sorted(scene.tweens, key=lambda t: t.at):
-            props = tween.model_dump(exclude_none=True, exclude={"target", "at", "draw", "orbit_angles", "marker_opacity"})
+            props = tween.model_dump(exclude_none=True, exclude={"target", "at", "draw", "orbit_angles", "marker_opacity", "points"})
             if tween.orbit_angles is not None:
                 orbit_props = {f"a{i}": a for i, a in enumerate(tween.orbit_angles)}
                 orbit_props.update(duration=tween.duration, ease=tween.ease)
@@ -209,8 +224,15 @@ class Backend:
                 markers = dict(opacity=tween.marker_opacity, duration=tween.duration, ease=tween.ease)
                 lines.append(f'tl.to("#{tween.target} .orbit-marker",{json.dumps(markers)},{tween.at});')
             if (tween.draw is None and tween.orbit_angles is None and
-                    tween.marker_opacity is None) or set(props) - {"duration", "ease"}:
+                    tween.marker_opacity is None and tween.points is None) or set(props) - {"duration", "ease"}:
                 lines.append(f'tl.to("#{tween.target}",{json.dumps(props)},{tween.at});')
+            if tween.points is not None:
+                coords = {f"{axis}{i}": value for i, point in enumerate(tween.points)
+                          for axis, value in zip(("x", "y"), point)}
+                coords.update(duration=tween.duration, ease=tween.ease)
+                encoded = (json.dumps(coords)[:-1]
+                           + f',"onUpdate":morph_update_{tween.target}' + "}")
+                lines.append(f'tl.to(morph_{tween.target},{encoded},{tween.at});')
             if tween.draw is not None:
                 trace = {
                     "strokeDashoffset": 1 - tween.draw,

@@ -123,6 +123,7 @@ class Tween(Strict):
     scale: float | None = Field(default=None, ge=0.1, le=3)
     rotation: float | None = Field(default=None, ge=-720, le=720)
     draw: float | None = Field(default=None, ge=0, le=1)
+    points: list[tuple[float, float]] | None = Field(default=None, max_length=80)
     ease: Literal["none", "power2.inOut", "power2.out", "power3.out"] = "power2.inOut"
 
 
@@ -158,6 +159,7 @@ class Scene(Strict):
             raise ValueError("The element IDs root and world are reserved by the backend.")
         if len(ids) != len(self.elements):
             raise ValueError("Element IDs must be unique.")
+        points_tweens_by_target = {}
         for tween in self.tweens:
             if tween.target not in ids or tween.at + tween.duration > self.duration:
                 raise ValueError("Tween target or timing is invalid.")
@@ -165,6 +167,31 @@ class Scene(Strict):
                 e for e in self.elements if e.id == tween.target
             ).kind not in {"path", "circle", "arc"}:
                 raise ValueError("Drawing progress applies only to paths and circles.")
+            if tween.points is not None:
+                element = next(e for e in self.elements if e.id == tween.target)
+                if element.kind != "path" or element.orbit is not None:
+                    raise ValueError("A points tween can only target a path with explicit points, not an orbit.")
+                if len(tween.points) != len(element.points):
+                    raise ValueError(
+                        "A points tween needs exactly as many points as the element."
+                    )
+                if any(
+                    not (0 <= x <= element.width and 0 <= y <= element.height)
+                    for x, y in tween.points
+                ):
+                    raise ValueError(
+                        "Tween points use local coordinates inside the element's bounds."
+                    )
+                if element.arrow_end:
+                    raise ValueError("A points tween cannot target a path with an arrowhead.")
+                points_tweens_by_target.setdefault(tween.target, []).append(tween)
+        for target_tweens in points_tweens_by_target.values():
+            target_tweens.sort(key=lambda t: t.at)
+            for earlier, later in zip(target_tweens, target_tweens[1:]):
+                if later.at < earlier.at + earlier.duration:
+                    raise ValueError(
+                        "Points tweens on the same path must not overlap in time."
+                    )
         orbit_ends = {}
         for tween in sorted(self.tweens, key=lambda t: t.at):
             element = next(e for e in self.elements if e.id == tween.target)

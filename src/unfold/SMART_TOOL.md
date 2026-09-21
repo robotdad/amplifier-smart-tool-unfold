@@ -24,17 +24,15 @@ requires:
     optional: true
   - name: Linux system libraries (unzip and Chromium dependencies)
     purpose: On Ubuntu 24.04, HyperFrames requires a zip archiver and headless Chromium shared libraries for rendering.
-    install: "apt-get install unzip libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxkbcommon0 libatspi2.0-0t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64"
+    install: src/unfold/SMART_TOOL.md#linux-renderer-prerequisites
     optional: true
-    platforms:
-      - linux
 ---
 # Unfold
 
 The Python library is the product. The CLI and optional loopback dashboard adapt
 the same operations. Compositions are 1280×720 at 30 fps, lasting 5–60 seconds.
 The authoring profile supports text, cards, paths, polygons, circles, arcs, image
-assets, stroke drawing and camera motion. An embedded Amplifier Agent creates and
+assets, stroke drawing, equal-point-count path morphing and camera motion. An embedded Amplifier Agent creates and
 refines compositions; deterministic operations manage assets, packs and delivery.
 
 Studio review includes full-width Single, synchronized Compare, retained drafts,
@@ -82,6 +80,15 @@ manifest. HyperFrames may prepare its Chromium binary on the first render. Creat
 calls do not run npm or initiate authentication. Amplifier Agent v0.17.0 and provider
 module revisions are pinned; first Agent preparation can fetch its runtime modules.
 Production guidance is packaged. No private skills directory is required.
+
+### Linux renderer prerequisites
+
+On Ubuntu 24.04, install the unzip utility and Chromium shared libraries before
+rendering. Package names differ on other Linux distributions:
+
+```sh
+sudo apt-get install unzip libnss3 libnspr4 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libdrm2 libxkbcommon0 libatspi2.0-0t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64
+```
 
 ## Library and authority
 
