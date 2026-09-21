@@ -188,7 +188,7 @@ CAPABILITY_HELP = {
         "Bring local media into the library",
         {"path": "/chosen/logo.png", "role": "image", "mode": "copy", "rights": "redistributable"},
         "New asset ID, hash, ownership and resolved path.",
-        "Pass a local path, not file bytes. Maximum 256 MiB. Roles: image, video, audio, font, example, motion, recipe. copy retains managed bytes; reference depends on the original location. Neither moves/deletes originals. Rights default unknown; only redistributable assets enter pack ZIPs.",
+        "Pass a local path, not file bytes. Maximum 256 MiB. Roles: image, video, audio, font, example, motion, recipe. copy retains managed bytes; reference depends on the original location. Neither moves/deletes originals. Rights default unknown; only redistributable assets enter pack ZIPs. Fonts must be static TTF/OTF faces up to 32 MiB; family, weight and style are read from the bytes.",
     ),
     "packs": (
         "Find reusable identities",
@@ -204,7 +204,7 @@ CAPABILITY_HELP = {
             "asset_ids": [],
         },
         "Pack record with current_version.",
-        "Supply pack_id to version an existing pack. Guidance is an object up to 20 KB; asset_ids must resolve to intact assets. Optional prerequisites declare unresolved requirements and block creative use until resolved in a new version.",
+        "Supply pack_id to version an existing pack. Guidance is an object up to 20 KB; asset_ids must resolve to intact assets. guidance.typography maps role names to {font_asset_id, optional font_weight/font_style}; each selected font must belong to asset_ids and supply that face. ZIP import remaps role IDs. Optional prerequisites declare unresolved requirements and block creative use until resolved in a new version.",
     ),
     "duplicate-pack": (
         "Make a local variation of a pack",

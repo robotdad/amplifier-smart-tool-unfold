@@ -22,4 +22,4 @@ jobs:
         with:
           node-version: '22'
       - run: python -m pip install ".[mcp]" pytest
-      - run: python -m pytest -q tests/test_processes.py tests/test_file_portability.py tests/test_mcp_staging.py tests/test_backend_portability.py
+      - run: python -m pytest -q tests/test_processes.py tests/test_file_portability.py tests/test_mcp_staging.py tests/test_backend_portability.py tests/test_fonts.py

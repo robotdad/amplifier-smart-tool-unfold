@@ -277,8 +277,9 @@ async def execute(owner):
         prompt += "\nINPUT DATA:\n" + json.dumps(
             {key: owner.request.get(key) for key in ("brief", "feedback", "base_scene")}
         )
-        prompt += "\nAVAILABLE IDENTITY IMAGES (use asset_id in image elements):\n" + json.dumps(
-            {i: {"name": a["name"]} for i, a in owner.request.get("resources", {}).items()}
+        prompt += "\nAVAILABLE IDENTITY ASSETS (image asset_id; text/card font_asset_id):\n" + json.dumps(
+            {i: {k: a[k] for k in ("name", "role", "font") if k in a}
+             for i, a in owner.request.get("resources", {}).items()}
         )
         await engine.submit_turn(
             {"sessionId": owner.request["operation_id"], "turnId": "1", "prompt": prompt}

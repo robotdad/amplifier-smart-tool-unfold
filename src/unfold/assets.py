@@ -10,6 +10,7 @@ import stat
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from .fonts import inspect_font, validate_typography
 from .models import UnfoldError
 from .store import digest, portable_archive, uid, write_all
 
@@ -85,6 +86,7 @@ class Assets:
             raise UnfoldError(
                 "INVALID_INPUT", "Rights must be unknown, redistributable or restricted."
             )
+        font = inspect_font(path) if role == "font" else None
         identity = uid()
         suffix = path.suffix.lower()
         if not re.fullmatch(r"\.[a-z0-9]{1,10}", suffix):
@@ -102,6 +104,8 @@ class Assets:
             "attribution": attribution,
             "ownership": "external reference" if mode == "reference" else "Unfold-managed",
         }
+        if font:
+            record["font"] = font
         if mode == "reference":
             record["external_path"] = str(path)
         else:
@@ -209,6 +213,10 @@ class Assets:
                     "ownership": "Unfold-managed",
                     "relative_path": str(destination),
                 }
+                if role == "font":
+                    with self.store.open_relative(destination, os.O_RDONLY) as fd:
+                        with os.fdopen(os.dup(fd), "rb") as stream:
+                            record["font"] = inspect_font(stream.read(), suffix)
                 if provenance:
                     record["mcp_upload_id"] = provenance
                 self.store.put("asset", record, db)
@@ -278,6 +286,11 @@ class Assets:
             raise UnfoldError(
                 "MATERIAL_CHANGED", "Repair changed or missing assets before creating a version."
             )
+        for asset in assets:
+            if asset["role"] == "font":
+                asset["font"] = inspect_font(asset["path"])
+        validate_typography(guidance, assets, {a.get("id") for a in prerequisites or []
+                                             if isinstance(a, dict) and a.get("role") == "font"})
         with self.store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             for asset in assets:
@@ -424,8 +437,11 @@ class Assets:
             if a["rights"] != "redistributable":
                 manifest["omissions"].append(
                     {
+                        "id": a["id"],
                         "name": a["name"],
                         "role": a["role"],
+                        "rights": a["rights"],
+                        "attribution": a["attribution"],
                         "reason": a["rights"] + " redistribution rights",
                         "sha256": a["sha256"],
                     }
@@ -445,6 +461,8 @@ class Assets:
                     "attribution",
                 )
             }
+            if a["role"] == "font":
+                entry["font"] = inspect_font(a["path"])
             entry["file"] = "assets/" + a["id"] + a["suffix"]
             manifest["assets"].append(entry)
             included.append((a["path"], entry["file"]))
@@ -533,9 +551,19 @@ class Assets:
                     raw = archive.read(a["file"])
                     if len(raw) != a["bytes"] or hashlib.sha256(raw).hexdigest() != a["sha256"]:
                         raise ValueError("Asset integrity mismatch.")
+                    if a["role"] == "font":
+                        actual_font = inspect_font(raw, a["suffix"])
+                        if "font" in a and a["font"] != actual_font:
+                            raise ValueError("Font metadata does not match its bytes.")
+                        a["font"] = actual_font
                     files.append(a["file"])
                 if len(files) != len(set(files)) or set(names) != {"manifest.json", *files}:
                     raise ValueError("Archive contents do not match manifest.")
+                if any(not isinstance(a, dict) for a in m["omissions"]):
+                    raise ValueError("Invalid omission records.")
+                validate_typography(m["guidance"], m["assets"],
+                                    {a.get("id") for a in m["omissions"] + m["prerequisites"]
+                                     if isinstance(a, dict) and a.get("role") == "font"})
                 return {"manifest": m, "sha256": sha256, "bytes": size}
         except (ValueError, KeyError, TypeError, zipfile.BadZipFile, RuntimeError) as exc:
             raise UnfoldError("INVALID_PACK", str(exc)) from None
@@ -625,6 +653,8 @@ class Assets:
                                 "attribution",
                             )
                         }
+                        if a["role"] == "font":
+                            record["font"] = a["font"]
                         record.update(
                             id=identity,
                             kind="asset",
@@ -635,12 +665,18 @@ class Assets:
                         self.store.put("asset", record, db)
                 pack_id, version_id = uid(), uid()
                 assets = [identity for identity, _ in created]
+                mapping = {a["id"]: i for a, i in zip(m["assets"], assets)}
+                guidance = json.loads(json.dumps(m["guidance"]))
+                roles = guidance.get("typography", {})
+                if isinstance(roles, dict):
+                    for face in roles.values():
+                        face["font_asset_id"] = mapping.get(face["font_asset_id"], face["font_asset_id"])
                 version = {
                     "id": version_id,
                     "kind": "pack_version",
                     "pack_id": pack_id,
                     "number": 1,
-                    "guidance": m["guidance"],
+                    "guidance": guidance,
                     "assets": assets,
                     "asset_hashes": {i: a["sha256"] for i, a in zip(assets, m["assets"])},
                     "prerequisites": m["prerequisites"] + m.get("omissions", []),

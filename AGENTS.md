@@ -151,3 +151,13 @@ skip if Amplifier Core or the OpenAI provider is absent; report those skips and
 install the pinned provider to validate a change at that boundary. Preserve the
 non-streaming request seam and recheck it when updating the provider pin. Tool
 schemas expose constraints, but deterministic scene validation remains authoritative.
+
+## Typography regressions
+
+`tests/test_fonts.py` covers static font intake, exact face selection, identity-role
+remapping, rights omissions and editable revisions without a provider. The portability
+matrix runs its deterministic cases. Supplying `UNFOLD_TEST_BACKEND` also checks real
+serif rendering, retained re-rendering, motion and alpha delivery. Redistributable IBM
+Plex Serif fixtures and their OFL license live in `tests/fixtures/fonts`; preserve their
+attribution. New typography defaults must not alter generated HTML for existing scenes
+that do not opt into custom typography.

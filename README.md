@@ -115,9 +115,14 @@ track objects in footage or perform region/crop transforms.
 
 You can import, trim, place and mix audio. Unfold does not generate or transcribe
 sound, and the model does not listen to it. Recording audio is excluded unless
-provided separately as an audio asset. Fonts can be stored, previewed and shared
-in packs, but custom-font rendering is not yet supported. Pack ZIPs share reusable
-identities and eligible assets; they are not editable-project backups.
+provided separately as an audio asset. Pack ZIPs share reusable identities and
+eligible assets; they are not editable-project backups.
+
+Custom brand typography stays editable: import static TTF/OTF faces as font assets,
+assign display/heading/body roles in an identity, and use them in text or cards.
+Retained scenes bundle the required faces, while identity ZIPs and delivery handoffs
+preserve redistribution declarations and report fonts they cannot include. See
+`unfold import-asset --help` and `unfold save-pack --help` for the supported inputs.
 
 ## Developing or contributing?
 

@@ -47,6 +47,36 @@ Sampling chooses the frame containing each requested time; returned `time` is th
 frame timestamp and `requested_time` preserves the request. Times must precede
 the end; the final frame starts at duration minus 1/30 second.
 
+Custom typography uses imported static TrueType (`.ttf`) and OpenType (`.otf`)
+faces up to 32 MiB each. Family, numeric weight and style are read from the file.
+Collections, web fonts, variable fonts and SVG fonts are rejected; supply a static
+TTF/OTF face instead. Text/card elements select `font_asset_id`, optional
+`font_weight` (1–1000), `font_style` (normal/italic/oblique), `letter_spacing`
+(pixels, default 0) and `line_height` (multiplier, default 1.22). A selected file
+must provide the exact weight/style and every non-whitespace character. No synthetic
+bold/italic or silent font substitution is used. Omitting weight/style uses that
+file's face; compositions without custom typography retain the system sans-serif.
+
+Import each required face with `import-asset --role font`, then include its asset ID
+in an identity's `asset_ids`. Assign roles inside pack guidance, for example
+`{"typography":{"display":{"font_asset_id":"FONT_ASSET_ID"},"heading":{"font_asset_id":"BOLD_ITALIC_ASSET_ID","font_weight":700,"font_style":"italic"}}}`.
+Roles guide the authoring agent; they are not automatic styles applied to every text
+node. Font bytes stay local; the permitted agent receives metadata and sampled frames.
+Rendered scenes retain and hash their used font dependencies and validate them with
+the renderer's browser. Capture waits for font loading. Text stays editable and can
+use the existing element animations. Retained scenes re-render without original
+font paths; selected identity versions still require their pinned assets for new
+model-backed work.
+
+Identity ZIP imports remap role asset IDs to the new library. Identity exports and
+delivery handoffs include only fonts declared redistributable and retain attribution;
+unknown/restricted faces are listed as omissions. An identity with omitted faces has
+unresolved prerequisites and cannot be used until repaired in a new version. Handoffs
+contain rendered media and eligible font dependencies, not a full editable project.
+Newly authored scenes retain the then-current rights declarations; handoffs also honor
+any stricter current asset declaration. Declarations are supplied
+by the caller, not a license verification service.
+
 Studio review includes full-width Single, synchronized Compare, retained drafts,
 bounded direct refinement, cancellation and observable outcomes. Identity ZIPs carry
 guidance and eligible assets. Delivery supports silent transparent ProRes 4444 MOV
@@ -56,12 +86,11 @@ Closed polygon paths can animate individual corner angles on a circular track,
 with attached corner markers. This supports irregular shapes resolving into
 regular polygons without corners leaving the track.
 
-This is not the entire draft vision. Arbitrary HTML/CSS, custom-font rendering,
-external source-edit adoption, editable project ZIP round trips, transcription,
-audio generation and renderer migration are not supported. Fonts can be stored,
-previewed and shared, but a required custom font remains a prerequisite to resolve;
-no promise of font substitution is made. Reusable motion/recipe files are stored
-as inert assets, never executed on import.
+This is not the entire draft vision. Arbitrary HTML/CSS, external source-edit adoption,
+editable project ZIP round trips, transcription, audio generation and renderer
+migration are not supported. Custom typography requires supplied static font faces;
+web/variable fonts and automatic font substitution are not supported. Reusable
+motion/recipe files are stored as inert assets, never executed on import.
 
 ## Installation
 

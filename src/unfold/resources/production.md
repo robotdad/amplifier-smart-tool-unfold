@@ -150,3 +150,17 @@ accordingly to match the orbit radius. Keep whole-element scale at 1 and avoid
 translation if the orbit must stay aligned with a stationary background circle.
 Example: a 640x640 path with center [320,320], radius 300, angles [10,75,190,290]
 and closed true can tween to [45,135,225,315] to resolve an irregular shape to a square.
+
+## Editable typography
+
+Identity guidance may define `typography` roles (display, heading, body or other
+named roles), each with `font_asset_id` and optional `font_weight`/`font_style`.
+Use the matching available font asset for each text or card element; preserve these
+choices across revisions unless the brief asks to change them. Assets report their
+actual family, weight and style. Each static file supplies exactly one face: do not
+request bold or italic from a regular file, or silently replace a required font.
+Omitting weight/style uses the selected file's own values. Set `letter_spacing` in
+pixels and `line_height` as a font-size multiplier when needed. Defaults are 0 and
+1.22. Use editable text, not rasterized wordmarks; separate text elements can animate
+letters independently. Missing faces or characters are actionable limitations.
+For projects without a custom font, the existing system sans-serif remains available.

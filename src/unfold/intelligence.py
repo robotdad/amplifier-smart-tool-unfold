@@ -172,9 +172,9 @@ class Production:
                 resources = self.request.get("resources", {})
                 for asset in resources.values():
                     if digest(Path(asset["path"])) != asset["sha256"]:
-                        raise UnfoldError("MATERIAL_CHANGED", "Selected identity image changed.")
+                        raise UnfoldError("MATERIAL_CHANGED", "Selected identity asset changed.")
                 self.backend.author(
-                    scene, self.directory / "source", {i: a["path"] for i, a in resources.items()}
+                    scene, self.directory / "source", {i: a if a.get("role") == "font" else a["path"] for i, a in resources.items()}
                 )
                 self.scene, self.rendered = scene, None
                 self.observations.clear()

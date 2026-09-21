@@ -13,6 +13,7 @@ import tempfile
 from fractions import Fraction
 from pathlib import Path
 
+from .fonts import inspect_font, retained_fonts, validate_face
 from .models import Scene, UnfoldError
 from .store import digest, write_json
 from .timing import FPS, encoded_frames, sample_frame
@@ -79,7 +80,7 @@ def geometry(element):
     )
 
 
-def run(argv, timeout=180):
+def run(argv, timeout=180, reject_font_errors=False):
     # Renderer processes have no provider credentials, user configuration or telemetry.
     env = {
         key: os.environ[key]
@@ -93,6 +94,11 @@ def run(argv, timeout=180):
         raise UnfoldError(
             "BACKEND_FAILED", type(exc).__name__, "Check doctor and backend setup."
         ) from None
+    if reject_font_errors and any(message in result.stdout + result.stderr for message in (
+        "Loading the font", "Failed to decode downloaded font", "OTS parsing error",
+        "Required font failed to load", "Font localization failed", "sub_timeline_readiness_timeout",
+    )):
+        raise UnfoldError("FONT_LOAD_FAILED", "Renderer reported a font-loading failure; output was not accepted.")
     if result.returncode:
         raise UnfoldError("BACKEND_FAILED", result.stderr[-3000:] or result.stdout[-3000:])
     return result.stdout
@@ -104,8 +110,9 @@ class Backend:
         self.cli = self.root / "node_modules/hyperframes/bin/hyperframes.mjs"
         self.gsap = self.root / "node_modules/gsap/dist/gsap.min.js"
 
-    def _run_cli(self, arguments, timeout=240):
-        return run(["node", str(self.cli), *arguments], timeout=timeout)
+    def _run_cli(self, arguments, timeout=240, reject_font_errors=False):
+        options = {"reject_font_errors": True} if reject_font_errors else {}
+        return run(["node", str(self.cli), *arguments], timeout=timeout, **options)
 
     def doctor(self):
         versions = {}
@@ -141,6 +148,42 @@ class Backend:
         directory.mkdir(exist_ok=True)
         resources = resources or {}
         resource_manifest = {}
+        font_manifest = {}
+        font_css = ""
+        # Validate every requested face before copying dependencies or writing source.
+        used_fonts = {e.font_asset_id for e in scene.elements if e.font_asset_id}
+        for identity in sorted(used_fonts):
+            asset = resources.get(identity)
+            if not isinstance(asset, dict) or asset.get("role") != "font":
+                raise UnfoldError("MISSING_FONT", "Selected font is not available in this identity.")
+            path = Path(asset["path"])
+            if not path.is_file() or digest(path) != asset["sha256"]:
+                raise UnfoldError("MISSING_FONT", "Selected font is missing or changed.")
+            metadata = inspect_font(path)
+            for e in scene.elements:
+                if e.font_asset_id == identity:
+                    validate_face(metadata, e.font_weight, e.font_style)
+                    inspect_font(path, text=e.text + e.label)
+            font_manifest[identity] = {
+                "role": "font", "name": asset.get("name", metadata["family"]),
+                "font": metadata, "suffix": path.suffix.lower(), "sha256": asset["sha256"],
+                "rights": asset.get("rights", "unknown"), "attribution": asset.get("attribution", ""),
+            }
+        for identity, face in font_manifest.items():
+            (directory / "fonts").mkdir(exist_ok=True)
+            dest = directory / "fonts" / (identity + face["suffix"])
+            shutil.copyfile(resources[identity]["path"], dest)
+            if digest(dest) != face["sha256"]:
+                raise UnfoldError("MATERIAL_CHANGED", "Font changed during retention.")
+            metadata = face["font"]
+            font_css += (f'@font-face{{font-family:unfold_{identity};src:url("fonts/{identity}{face["suffix"]}") '
+                         f'format("{metadata["format"]}");font-weight:{metadata["weight"]};'
+                         f'font-style:{metadata["style"]};font-display:block;}}')
+        if font_manifest:
+            write_json(directory / "fonts.json", font_manifest)
+        elif (directory / "fonts.json").exists():
+            (directory / "fonts.json").unlink()
+        resources = {i: a for i, a in resources.items() if not isinstance(a, dict)}
         if resources:
             from PIL import Image
 
@@ -175,11 +218,27 @@ class Backend:
             border = f"1px solid {e.border}" if e.kind == "card" else "none"
             text = html.escape(e.text).replace("\n", "<br>")
             label = f'<div class="label">{html.escape(e.label)}</div>' if e.label else ""
+            typography = ""
+            weight, style = e.font_weight, e.font_style
+            if e.font_asset_id:
+                face = font_manifest[e.font_asset_id]["font"]
+                weight, style = face["weight"], face["style"]
+                typography += f"font-family:unfold_{e.font_asset_id};font-synthesis:none;"
+                if label:
+                    label = label.replace('class="label"', 'class="label" style="font-weight:inherit"')
+            if weight is not None:
+                typography += f"font-weight:{weight};"
+            if style is not None:
+                typography += f"font-style:{style};"
+            if e.letter_spacing != 0:
+                typography += f"letter-spacing:{e.letter_spacing}px;"
+            if e.line_height != 1.22:
+                typography += f"line-height:{e.line_height};"
             elements.append(
                 f'<div id="{e.id}" class="element {e.kind}" style="left:{e.x}px;top:{e.y}px;'
                 f"width:{e.width}px;height:{e.height}px;color:{e.color};background:{background};"
                 f"font-size:{e.font_size}px;opacity:{e.opacity};border:{border};"
-                f'border-radius:{e.radius}px;padding:{padding}">{label}{text}</div>'
+                f'border-radius:{e.radius}px;padding:{padding}{";" + typography if typography else ""}">{label}{text}</div>'
             )
         lines = []
         for e in scene.elements:
@@ -277,19 +336,29 @@ class Backend:
                     "ease": move.ease,
                 }
                 lines.append(f'tl.to("#world",{json.dumps(props)},{move.at});')
+        # The pinned renderer awaits document.fonts.ready before capture. Register
+        # the populated timeline only after all required faces have loaded as well.
+        font_gate = ""
+        font_gate_end = ""
+        if font_manifest:
+            loads = [f'document.fonts.load({json.dumps(str(f["font"]["style"]) + " " + str(f["font"]["weight"]) + " 28px unfold_" + i)})'
+                     for i, f in font_manifest.items()]
+            font_gate = "Promise.all([" + ",".join(loads) + "]).then(faces=>{if(faces.some(f=>!f.length))throw new Error('Required font failed to load');"
+            font_gate_end = "}).catch(error=>{document.documentElement.dataset.fontError=String(error);throw error;});"
+        font_policy = " font-src 'self' data:;" if font_manifest else ""
         document = f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self';{font_policy} connect-src 'none'; object-src 'none'; frame-src 'none'">
 <title>{html.escape(scene.title)}</title><script src="gsap.min.js"></script><style>
 *{{box-sizing:border-box}}html,body{{margin:0;width:100%;height:100%;overflow:hidden}}
 body{{font-family:system-ui,sans-serif}}#root{{position:relative;width:100%;height:100%;background:{scene.background};overflow:hidden}}
 .element{{position:absolute;line-height:1.22;transform-origin:center center;font-weight:550}}
 .label{{font-size:14px;line-height:1.2;letter-spacing:1.5px;margin-bottom:10px;font-weight:600}}
-.line,.dot{{pointer-events:none}}
+.line,.dot{{pointer-events:none}}{font_css}
 </style></head><body><div id="root" data-composition-id="unfold" data-start="0" data-width="1280" data-height="720" data-duration="{scene.duration}">
 {body}</div><script>
-window.__timelines=window.__timelines||{{}};const tl=gsap.timeline({{paused:true}});
+{font_gate}window.__timelines=window.__timelines||{{}};const tl=gsap.timeline({{paused:true}});
 {"".join(lines)}
-window.__timelines.unfold=tl;
+window.__timelines.unfold=tl;{font_gate_end}
 </script></body></html>'''
         (directory / "index.html").write_text(document)
         shutil.copyfile(self.gsap, directory / "gsap.min.js")
@@ -310,6 +379,10 @@ window.__timelines.unfold=tl;
                 if actual != expected:
                     raise UnfoldError("MATERIAL_CHANGED", "Retained image changed.")
                 extra += identity + actual
+        for identity, face in sorted(retained_fonts(directory).items()):
+            extra += identity + face["sha256"]
+        if (Path(directory) / "fonts.json").exists():
+            extra += digest(Path(directory) / "fonts.json")
         return hashlib.sha256(
             (
                 extra
@@ -319,6 +392,15 @@ window.__timelines.unfold=tl;
                 )
             ).encode()
         ).hexdigest()
+
+    def retained_resources(self, directory):
+        directory = Path(directory)
+        manifest = directory / "resources.json"
+        resources = {i: directory / "media" / (i + ".png")
+                     for i in json.loads(manifest.read_text())} if manifest.exists() else {}
+        resources.update({i: {**face, "path": str(directory / "fonts" / (i + face["suffix"]))}
+                          for i, face in retained_fonts(directory).items()})
+        return resources
 
     def render(self, directory, output, alpha=False):
         self.require()
@@ -330,15 +412,7 @@ window.__timelines.unfold=tl;
         with tempfile.TemporaryDirectory(
             prefix="unfold-validate-", dir=Path(directory).parent
         ) as temporary:
-            resource_path = Path(directory) / "resources.json"
-            resources = (
-                {
-                    i: Path(directory) / "media" / (i + ".png")
-                    for i in json.loads(resource_path.read_text())
-                }
-                if resource_path.exists()
-                else {}
-            )
+            resources = self.retained_resources(directory)
             self.author(scene, temporary, resources)
             if any(
                 digest(Path(temporary) / name) != digest(Path(directory) / name)
@@ -348,6 +422,16 @@ window.__timelines.unfold=tl;
                     "SOURCE_CHANGED",
                     "Generated source was externally modified; no code was executed or replaced.",
                 )
+        fonts = retained_fonts(directory)
+        if fonts:
+            from importlib.resources import files
+
+            try:
+                run(["node", str(files("unfold").joinpath("resources/check_fonts.cjs")), str(self.root),
+                     *[str(Path(directory) / "fonts" / (i + f["suffix"])) for i, f in fonts.items()]],
+                    timeout=30)
+            except UnfoldError as exc:
+                raise UnfoldError("FONT_LOAD_FAILED", "Required font failed browser validation: " + str(exc)) from None
         self._run_cli(
             [
                 "render",
@@ -364,6 +448,7 @@ window.__timelines.unfold=tl;
                 "standard",
             ],
             timeout=240,
+            reject_font_errors=bool(fonts),
         )
         meta = self.probe(output, alpha=alpha)
         if (

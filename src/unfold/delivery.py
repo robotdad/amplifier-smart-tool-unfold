@@ -170,15 +170,7 @@ class Delivery:
         # The explicit overlay profile removes only the canvas background, never colored elements.
         scene.background = "transparent"
         source = directory / "source"
-        resource_manifest = Path(rev["source_path"]) / "resources.json"
-        resources = (
-            {
-                i: Path(rev["source_path"]) / "media" / (i + ".png")
-                for i in json.loads(resource_manifest.read_text())
-            }
-            if resource_manifest.exists()
-            else {}
-        )
+        resources = self.backend.retained_resources(rev["source_path"])
         self.backend.author(scene, source, resources)
         overlay = directory / "overlay.mov"
         self.backend.render(source, overlay, alpha=True)
@@ -290,6 +282,13 @@ class Delivery:
             "audio": [],
             "reference_included": a["included_reference"],
         }
+        from .fonts import retained_fonts
+
+        revision = self.inspect(a["revision_id"])
+        if revision["source_integrity"] != "intact":
+            raise UnfoldError("MATERIAL_CHANGED", "Retained delivery dependencies changed.")
+        fonts = retained_fonts(revision["source_path"])
+        manifest["fonts"], manifest["omissions"] = [], []
         # Only requested contribution and separate audio; never include reference footage in overlay packs.
         try:
             with portable_archive(destination) as z:
@@ -307,6 +306,20 @@ class Delivery:
                     if name not in z.namelist():
                         z.write(asset["path"], name)
                     manifest["audio"].append({**t, "file": name, "sha256": asset["sha256"]})
+                for identity, face in fonts.items():
+                    entry = {"id": identity, **face}
+                    try:
+                        current = self.store.get(identity, "asset")
+                    except UnfoldError:
+                        current = None
+                    if current and current["rights"] != "redistributable":
+                        entry.update(rights=current["rights"], attribution=current["attribution"])
+                    if entry["rights"] != "redistributable":
+                        manifest["omissions"].append({**entry, "reason": entry["rights"] + " redistribution rights"})
+                        continue
+                    entry["file"] = "fonts/" + identity + face["suffix"]
+                    z.write(Path(revision["source_path"]) / entry["file"], entry["file"])
+                    manifest["fonts"].append(entry)
                 z.writestr("manifest.json", json.dumps(manifest, indent=2))
         except FileExistsError:
             raise UnfoldError("OUTPUT_EXISTS", "Choose a new destination.") from None

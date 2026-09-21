@@ -344,7 +344,10 @@ class Unfold(Review, Assets, Delivery):
             directory = self.store.root / record["source"]
             try:
                 intact = self.backend.source_hash(directory) == record["source_sha256"]
-            except (OSError, ValueError, UnfoldError):
+            except UnfoldError as exc:
+                intact = False
+                record["source_error"] = exc.as_dict()
+            except (OSError, ValueError):
                 intact = False
             record["source_integrity"] = "intact" if intact else "changed_or_missing"
             record["source_path"] = str(directory)
@@ -595,6 +598,8 @@ class Unfold(Review, Assets, Delivery):
         identity_version=None,
     ):
         revision = self.inspect(revision_id)
+        if revision.get("source_error", {}).get("code") == "MISSING_FONT":
+            raise UnfoldError(**revision["source_error"])
         if revision.get("kind") != "revision" or revision["source_integrity"] != "intact":
             raise UnfoldError("MATERIAL_CHANGED", "A valid retained base revision is required.")
         if not isinstance(feedback, str) or not 1 <= len(feedback) <= 5000:
@@ -637,6 +642,8 @@ class Unfold(Review, Assets, Delivery):
             )
         """Re-render a committed composition without initializing intelligence."""
         revision = self.inspect(revision_id)
+        if revision.get("source_error", {}).get("code") == "MISSING_FONT":
+            raise UnfoldError(**revision["source_error"])
         if revision.get("kind") != "revision" or revision["source_integrity"] != "intact":
             raise UnfoldError("MATERIAL_CHANGED", "A valid retained source is required.")
         operation_id = uid()
@@ -755,12 +762,25 @@ class Unfold(Review, Assets, Delivery):
                 version = self.store.get(brief.identity_version, "pack_version")
                 for asset_id in version["assets"]:
                     asset = self.asset(asset_id)
-                    if asset["role"] == "image":
+                    if asset["role"] in {"image", "font"}:
                         resources[asset_id] = {
                             "path": asset["path"],
                             "sha256": asset["sha256"],
                             "name": asset["name"],
+                            "role": asset["role"],
+                            "rights": asset["rights"],
+                            "attribution": asset["attribution"],
                         }
+                        if asset["role"] == "font":
+                            from .fonts import inspect_font
+
+                            resources[asset_id]["font"] = inspect_font(asset["path"])
+            # Expose retained faces when continuing a scene without a selected pack.
+            # Explicit identity adoption uses the new pack's selection.
+            if base and base.get("identity_version") == brief.identity_version:
+                for i, resource in self.backend.retained_resources(base["source_path"]).items():
+                    if isinstance(resource, dict) and i not in resources:
+                        resources[i] = resource
             payload["resources"] = resources
             if brief.reference_id:
                 reference = self.asset(brief.reference_id)

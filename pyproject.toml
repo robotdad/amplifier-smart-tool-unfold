@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.10,<3",
     "Pillow>=11,<13",
     "psutil>=7,<8",
+    "fonttools>=4.60,<5",
 ]
 
 [project.optional-dependencies]

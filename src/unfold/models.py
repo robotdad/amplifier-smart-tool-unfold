@@ -91,6 +91,11 @@ class Element(Strict):
     color: str = Field(default="#edf4f5", pattern=r"^#[0-9a-fA-F]{6}$")
     border: str = Field(default="#345368", pattern=r"^#[0-9a-fA-F]{6}$")
     font_size: int = Field(default=28, ge=16, le=80)
+    font_asset_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    font_weight: int | None = Field(default=None, ge=1, le=1000)
+    font_style: Literal["normal", "italic", "oblique"] | None = None
+    letter_spacing: float = Field(default=0, ge=-10, le=40)
+    line_height: float = Field(default=1.22, ge=0.5, le=4)
     opacity: float = Field(default=0, ge=0, le=1)
     radius: int = Field(default=14, ge=0, le=100)
     points: list[tuple[float, float]] = Field(default_factory=list, max_length=80)
@@ -106,6 +111,8 @@ class Element(Strict):
 
     @model_validator(mode="after")
     def fits(self):
+        if self.font_asset_id and self.kind not in {"text", "card"}:
+            raise ValueError("Custom fonts apply to text and card elements.")
         if self.glow_tip and self.kind != "arc":
             raise ValueError("A synchronized glowing tip currently requires an arc.")
         if self.x + self.width > 1280 or self.y + self.height > 720:
