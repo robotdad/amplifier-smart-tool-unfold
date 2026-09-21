@@ -150,6 +150,30 @@ results and recovery guidance; `-h` is its short flag reference.
 
 Global CLI options `--library PATH` and `--backend PATH` precede the subcommand.
 
+`max_response_tokens` is a per-response ceiling. OpenAI calls use non-streaming
+requests with no automatic truncation continuation or raised-token recovery.
+`PROVIDER_INCOMPLETE` ends the operation without committing a revision. Simplify
+its brief or explicitly authorize a new operation; retrying the same request ID
+returns the retained failure. `RESOURCE_LIMIT` can also mean an internal provider
+request was blocked before transmission.
+
+`model_call` events count entries through Unfold's model gate. OpenAI additionally
+records `provider_attempt` events before each request, including its token ceiling;
+at most one attempt is permitted per gate call. Revision usage includes
+`provider_attempts` for OpenAI; it is null for other providers, whose internal
+attempts are not measured by this counter. These are attempt counts, not billed
+token usage. Events remain available when an operation fails.
+
+Scene validation errors are repairable within the remaining grant. The first
+three rejected author/patch payloads per operation are retained in local
+`operations/OPERATION/rejected-CALL.json` diagnostics, each capped at 64 KiB, with
+original byte count/hash and a truncation flag. Files are created with owner-only
+permissions on POSIX; Windows uses the library directory's ACL. They may contain
+supplied creative material. Public events contain a diagnostic reference and
+field-level errors, not the rejected payload. Diagnostics are not exported or
+sent back to providers automatically and remain until that operation's local
+workspace is removed. Validation does not guarantee creative quality.
+
 - `create(brief, grant, request_id=None)` / `create --brief brief.json --grant grant.json`:
   model-backed. Returns a retained operation; completion identifies the revision.
 - `revise(revision_id, feedback, grant, request_id=None)` /

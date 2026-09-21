@@ -51,6 +51,53 @@ def disclosure_size(value):
 class Gate:
     def __init__(self, provider, production):
         self.inner, self.owner = provider, production
+        self.attempted = False
+        if production.grant.provider == "openai":
+            # This seam belongs to the pinned OpenAI provider above. Its normal
+            # retry configuration does not govern truncation auto-continuation.
+            create = getattr(provider, "_create_response", None)
+            if not callable(create):
+                raise UnfoldError("PROVIDER_CONFIGURATION", "OpenAI request boundary unavailable.")
+
+            async def bounded_response(params):
+                owner = self.owner
+                if owner.fatal:
+                    raise owner.fatal
+                limit = params.get("max_output_tokens")
+                if (self.attempted or type(limit) is not int or
+                        not 0 < limit <= owner.grant.max_response_tokens or
+                        params.get("model") != owner.grant.model or
+                        params.get("background") or params.get("stream")):
+                    owner.fatal = UnfoldError(
+                        "RESOURCE_LIMIT", "Provider attempted a request outside the grant.",
+                        "No additional request was sent. Authorize a new operation if needed.",
+                    )
+                    raise owner.fatal
+                self.attempted = True
+                owner.provider_attempts += 1
+                owner.event("provider_attempt", {
+                    "number": owner.provider_attempts, "model_call": owner.model_calls,
+                    "provider": "openai", "max_response_tokens": limit,
+                })
+                # Scene uses optional defaults and tuple schemas outside OpenAI's
+                # strict subset. Expose its structure without implicit strict-mode
+                # normalization; library validation remains the acceptance boundary.
+                params = {**params, "tools": [
+                    {**tool, "strict": False} if tool.get("type") == "function" else tool
+                    for tool in params.get("tools", [])
+                ]} if "tools" in params else params
+                response = await create(params)
+                if getattr(response, "status", None) != "completed":
+                    owner.fatal = UnfoldError(
+                        "PROVIDER_INCOMPLETE", "OpenAI returned an incomplete response.",
+                        "No continuation or larger-token retry was sent. Simplify the request "
+                        "or authorize a new operation with an appropriate allowance.",
+                    )
+                    owner.event("provider_incomplete", {"attempt": owner.provider_attempts})
+                    raise owner.fatal
+                return response
+
+            provider._create_response = bounded_response
 
     def __getattr__(self, name):
         if name == "stream":
@@ -103,6 +150,7 @@ class Gate:
             owner.fatal = UnfoldError("RESOURCE_LIMIT", "Provider disclosure allowance exhausted.")
             raise owner.fatal
         owner.model_calls += 1
+        self.attempted = False
         owner.text_bytes += text_bytes
         owner.image_bytes += image_bytes
         owner.event(
@@ -122,17 +170,23 @@ class Gate:
                 "model": owner.grant.model,
                 "max_output_tokens": owner.grant.max_response_tokens,
                 "stream": False,
+                "metadata": {**(request.metadata or {}), "stream": False},
             }
         )
+        if owner.grant.provider == "openai":
+            kwargs = {**kwargs, "model": owner.grant.model, "background": False}
         try:
             response = await self.inner.complete(request, **kwargs)
         except Exception:
-            owner.fatal = UnfoldError(
+            owner.fatal = owner.fatal or UnfoldError(
                 "PROVIDER_ERROR",
                 "The configured provider failed the request.",
-                "Check model availability and credentials. No automatic retry was made.",
+                "Check model availability and credentials. Inspect provider-attempt events; "
+                "a new operation requires a new request identity.",
             )
             raise owner.fatal from None
+        if owner.fatal:
+            raise owner.fatal
         owner.text_bytes += len(response.model_dump_json(exclude={"metadata"}).encode())
         if owner.text_bytes > owner.grant.max_text_bytes:
             owner.fatal = UnfoldError("RESOURCE_LIMIT", "Response exceeded the text allowance.")
@@ -167,7 +221,7 @@ async def execute(owner):
             "api_key": os.environ[variable],
             "default_model": owner.grant.model,
             "max_retries": 0,
-            **({"use_streaming": False} if owner.grant.provider == "gemini" else {}),
+            "use_streaming": False,
         },
     }
 
@@ -189,6 +243,8 @@ async def execute(owner):
                     await session.coordinator.mount("providers", Gate(provider, owner), name=name)
                 tool = owner.tool()
                 await session.coordinator.mount("tools", tool, name=tool.name)
+                author = owner.author_tool()
+                await session.coordinator.mount("tools", author, name=author.name)
                 try:
                     await session.execute(ctx.prompt)
                 except Finished:

@@ -140,3 +140,14 @@ Pack preview/import must consume the checked server-owned snapshot, not reopen a
 inspected staging pathname. Preserve finite expiry/count/byte cleanup for staging,
 preview snapshots and prepared transfers, while keeping records needed to recover an
 explicitly incomplete effect.
+
+## Provider budget regressions
+
+`tests/test_provider_budget.py` uses scripted HTTP responses with the real OpenAI
+provider and SDK, plus real offline worker/supervisor execution. The provider budget
+CI job installs the exact revision from `unfold.agent.PROVIDERS` and runs these
+checks without credentials or paid calls. Locally the optional provider tests may
+skip if Amplifier Core or the OpenAI provider is absent; report those skips and
+install the pinned provider to validate a change at that boundary. Preserve the
+non-streaming request seam and recheck it when updating the provider pin. Tool
+schemas expose constraints, but deterministic scene validation remains authoritative.

@@ -1,12 +1,16 @@
 """Model-facing production capabilities and executable submission boundaries."""
 
+import hashlib
 import json
+import os
 import threading
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from .backend import Backend
 from .models import Grant, Scene, UnfoldError
-from .store import Store, digest, uid
+from .store import Store, digest, uid, write_all
 
 
 class Production:
@@ -22,9 +26,11 @@ class Production:
         self.reference_evidence = None
         self.delivered = set()
         self.calls = self.model_calls = self.renders = self.frames = 0
+        self.provider_attempts = 0
+        self.rejections = 0
         self.text_bytes = self.image_bytes = 0
         self.result = self.fatal = None
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         reference = request.get("reference")
         if reference:
             from .backend import run
@@ -88,12 +94,38 @@ class Production:
     def event(self, kind, data):
         self.store.event(kind, self.request["operation_id"], data)
 
+    def rejected_authoring(self, action, payload, error):
+        """Retain at most three private 64-KiB records, never raw input in events."""
+        if self.rejections >= 3:
+            return
+        self.rejections += 1
+        raw = payload.encode("utf-8")
+        record = {"action": action, "call": self.calls, "error": error,
+                  "payload_sha256": hashlib.sha256(raw).hexdigest(),
+                  "payload_bytes": len(raw), "payload": raw[:32768].decode("utf-8", "ignore")}
+        while True:
+            record["truncated"] = len(record["payload"].encode("utf-8")) != len(raw)
+            encoded = json.dumps(record, ensure_ascii=False).encode("utf-8")
+            if len(encoded) <= 65536:
+                break
+            record["payload"] = record["payload"][:len(record["payload"]) // 2]
+        relative = Path("operations") / self.request["operation_id"] / f"rejected-{self.calls}.json"
+        with self.store.open_relative(relative, os.O_WRONLY | os.O_CREAT | os.O_EXCL) as fd:
+            write_all(fd, encoded)
+            os.fsync(fd)
+        self.event("authoring_rejected", {
+            "call": self.calls, "diagnostic": str(relative),
+            "payload_sha256": record["payload_sha256"], "truncated": record["truncated"],
+        })
+
     def call(self, action, payload):
         with self.lock:
             if self.result is not None:
                 raise UnfoldError(
                     "ALREADY_SUBMITTED", "This operation has already submitted a result."
                 )
+            if self.fatal:
+                raise self.fatal
             if self.store.get(self.request["operation_id"], "operation")["status"] != "running":
                 raise UnfoldError("CANCELLED", "Operation is no longer active.")
             self.calls += 1
@@ -232,6 +264,8 @@ class Production:
                     "backend": self.backend.doctor()["versions"],
                     "usage": {
                         "model_calls": self.model_calls,
+                        "provider_attempts": (self.provider_attempts
+                                              if self.grant.provider == "openai" else None),
                         "tool_calls": self.calls,
                         "renders": self.renders,
                         "frames": self.frames,
@@ -247,17 +281,55 @@ class Production:
                 raise self.fatal
             raise ValueError("Unknown production action.")
 
-    def tool(self):
+    async def execute_tool(self, action, payload):
         import asyncio
 
+        return await asyncio.to_thread(self._execute_tool, action, payload)
+
+    def _execute_tool(self, action, payload):
         from amplifier_core import ToolResult
 
+        with self.lock:
+            try:
+                value = self.call(action, payload)
+                return ToolResult(success=True, output=value)
+            except Exception as exc:
+                if isinstance(exc, ValidationError):
+                    errors = exc.errors(include_input=False, include_url=False, include_context=False)
+                    error = {"code": "INVALID_SCENE", "message": "Correct the scene validation errors.",
+                             "violations": [{"loc": [str(part)[:80] for part in e["loc"][:8]], "type": e["type"],
+                                             "message": e["msg"][:500]} for e in errors[:20]]}
+                elif isinstance(exc, UnfoldError):
+                    error = exc.as_dict()
+                else:
+                    error = {"code": "INVALID_INPUT", "message": str(exc)[:3000]}
+                if action in {"author", "patch"} and isinstance(exc, ValueError):
+                    # Serialize diagnostics with other tool actions; invalid work must
+                    # never replace a valid source or reset its review evidence.
+                    self.rejected_authoring(action, payload, error)
+                self.event("production_error", {"action": action, "error": error})
+                return ToolResult(success=False, error=error)
+
+    def author_tool(self):
+        owner = self
+
+        class Author:
+            name = "author_scene"
+            description = "Author a complete scene. Constraints are validated before persistence."
+            input_schema = Scene.model_json_schema()
+
+            async def execute(self, input):
+                return await owner.execute_tool("author", json.dumps(input))
+
+        return Author()
+
+    def tool(self):
         owner = self
 
         class Tool:
             name = "production"
             description = (
-                "Author, render, inspect and submit a motion composition within the granted scope."
+                "Patch, render, inspect and submit a composition. Use author_scene for authoring."
             )
             input_schema = {
                 "type": "object",
@@ -266,7 +338,6 @@ class Production:
                         "type": "string",
                         "enum": [
                             "inspect",
-                            "author",
                             "patch",
                             "render",
                             "sample",
@@ -284,16 +355,6 @@ class Production:
             }
 
             async def execute(self, input):
-                try:
-                    value = await asyncio.to_thread(owner.call, input["action"], input["payload"])
-                    return ToolResult(success=True, output=value)
-                except Exception as exc:
-                    error = (
-                        exc.as_dict()
-                        if isinstance(exc, UnfoldError)
-                        else {"message": str(exc)[:3000]}
-                    )
-                    owner.event("production_error", {"action": input.get("action"), "error": error})
-                    return ToolResult(success=False, error=error)
+                return await owner.execute_tool(input.get("action"), input.get("payload"))
 
         return Tool()
