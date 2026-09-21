@@ -2,7 +2,9 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+
+from .timing import FPS, MIN_DURATION, canonical_duration, encoded_frames
 
 
 class UnfoldError(Exception):
@@ -18,6 +20,23 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
+def normalize_duration(seconds, info):
+    # Re-rendering saved source must not silently rewrite its original HTML timing.
+    if info.context and info.context.get("retained_source"):
+        return seconds
+    return canonical_duration(seconds)
+
+
+Duration = Annotated[
+    float,
+    Field(ge=MIN_DURATION, le=60, description=(
+        "Seconds, from one 30-fps frame (1/30 s) through 60 s. Rounded to the nearest "
+        "whole frame, with half-frame ties rounded up; retained as frames/30."
+    )),
+    AfterValidator(normalize_duration),
+]
+
+
 class Brief(Strict):
     title: str = Field(min_length=1, max_length=120)
     intent: str = Field(min_length=1, max_length=12000)
@@ -27,7 +46,7 @@ class Brief(Strict):
     reference_id: str | None = None
     reference_start: float = Field(default=0, ge=0)
     cues: list[str] = Field(default_factory=list, max_length=40)
-    duration: float = Field(default=20, ge=5, le=60)
+    duration: Duration = 20
 
 
 class Grant(Strict):
@@ -142,7 +161,7 @@ class Scene(Strict):
     """Internal backend-specific authoring input, not a universal interchange format."""
 
     title: str = Field(min_length=1, max_length=120)
-    duration: float = Field(ge=5, le=60)
+    duration: Duration
     background: str = Field(default="#08131f", pattern=r"^(#[0-9a-fA-F]{6}|transparent)$")
     elements: list[Element] = Field(min_length=1, max_length=70)
     tweens: list[Tween] = Field(min_length=1, max_length=200)
@@ -159,9 +178,11 @@ class Scene(Strict):
             raise ValueError("The element IDs root and world are reserved by the backend.")
         if len(ids) != len(self.elements):
             raise ValueError("Element IDs must be unique.")
+        last_frame = (encoded_frames(self.duration) - 1) / FPS
         points_tweens_by_target = {}
         for tween in self.tweens:
-            if tween.target not in ids or tween.at + tween.duration > self.duration:
+            if (tween.target not in ids or tween.at > last_frame + 1e-9 or
+                    tween.at + tween.duration > self.duration + 1e-9):
                 raise ValueError("Tween target or timing is invalid.")
             if tween.draw is not None and next(
                 e for e in self.elements if e.id == tween.target
@@ -206,7 +227,8 @@ class Scene(Strict):
                 orbit_ends[tween.target] = tween.at + tween.duration
         end = 0
         for move in self.camera:
-            if move.at < end or move.at + move.duration > self.duration:
+            if (move.at < end or move.at > last_frame + 1e-9 or
+                    move.at + move.duration > self.duration + 1e-9):
                 raise ValueError(
                     "Camera moves must be chronological, non-overlapping and fit duration."
                 )

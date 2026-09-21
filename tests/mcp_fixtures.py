@@ -7,7 +7,7 @@ from unfold import Unfold
 from unfold.store import digest, uid
 
 
-def seed_media_library(root, *, playable=True):
+def seed_media_library(root, *, playable=True, duration=5):
     """Return (library, project, revisions, artifacts); FFmpeg only, no model/backend."""
     library = Unfold(root)
     project, revisions, artifacts = uid(), [uid(), uid()], [uid(), uid()]
@@ -26,7 +26,7 @@ def seed_media_library(root, *, playable=True):
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc2=size=320x180:rate=10:duration=5",
+                f"testsrc2=size=320x180:rate=30:duration={duration}",
                 "-c:v",
                 "libx264",
                 "-pix_fmt",
@@ -61,7 +61,7 @@ def seed_media_library(root, *, playable=True):
                 "brief": {
                     "title": "Transport fixture",
                     "intent": "Verify retained media playback",
-                    "duration": 5,
+                    "duration": duration,
                 },
                 "source": str(source.relative_to(library.store.root)),
                 "source_sha256": library.backend.source_hash(source),

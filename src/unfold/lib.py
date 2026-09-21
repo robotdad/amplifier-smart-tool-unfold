@@ -267,40 +267,48 @@ class Unfold(Review, Assets, Delivery):
 
     def sample_output(self, artifact_id, times):
         import math
+        from fractions import Fraction
 
         from .backend import run
         from .delivery import media_info
+        from .timing import sample_frame
 
         artifact = self.artifact(artifact_id)
         if artifact["integrity"] != "intact":
             raise UnfoldError("MATERIAL_CHANGED", "Output is changed or missing.")
         info = media_info(artifact["path"])
+        video = next(s for s in info["streams"] if s["codec_type"] == "video")
+        fps = float(Fraction(video["avg_frame_rate"]))
+        count = int(video["nb_frames"])
+        duration = count / fps
         if (
             not times
             or len(times) > 12
-            or any(not math.isfinite(t) or not 0 <= t < info["duration"] for t in times)
+            or any(not math.isfinite(t) or not 0 <= t < duration for t in times)
         ):
             raise UnfoldError("INVALID_INPUT", "Choose 1–12 finite times within the output.")
         directory = self.store.workspace(uid())
         frames = []
         for i, t in enumerate(times):
+            frame = min(sample_frame(t, fps), count - 1)
             path = directory / f"frame-{i}.png"
             run(
                 [
                     "ffmpeg",
                     "-v",
                     "error",
-                    "-ss",
-                    str(t),
                     "-i",
                     artifact["path"],
+                    "-vf",
+                    f"select=eq(n\\,{frame})",
                     "-frames:v",
                     "1",
                     str(path),
                 ],
                 timeout=30,
             )
-            frames.append({"path": str(path), "time": t, "sha256": digest(path)})
+            frames.append({"path": str(path), "time": frame / fps,
+                           "requested_time": t, "sha256": digest(path)})
         result = {
             "artifact_id": artifact_id,
             "sha256": artifact["sha256"],

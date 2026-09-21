@@ -37,9 +37,10 @@ def host_script():
     ).stdout
 
 
-def test_mcp_app_is_native_dashboard_with_retained_media_and_feedback(tmp_path):
+@pytest.mark.parametrize("duration", [5, 2.5, 1/30])
+def test_mcp_app_is_native_dashboard_with_retained_media_and_feedback(tmp_path, duration):
     async def run():
-        library, _, revisions, _ = seed_media_library(tmp_path)
+        library, _, revisions, _ = seed_media_library(tmp_path, duration=duration)
         async with Client(create_server(library)) as client, async_playwright() as pw:
             browser = await pw.chromium.launch()
             page = await browser.new_page(viewport={"width": 1180, "height": 900})
@@ -72,7 +73,14 @@ def test_mcp_app_is_native_dashboard_with_retained_media_and_feedback(tmp_path):
             video = frame.locator("#players video")
             await expect(video).to_be_visible()
             await expect(video).to_have_js_property("videoWidth", 320)
-            assert 4.9 <= await video.evaluate("v => v.duration") <= 5.1
+            assert abs(await video.evaluate("v => v.duration") - duration) < 0.001
+            scrub = frame.locator("#scrub")
+            assert float(await scrub.get_attribute("max")) == duration
+            assert await scrub.get_attribute("step") == "any"
+            at = max(0, duration - 1/30)
+            await scrub.evaluate("(el, at) => {el.value = String(at); el.dispatchEvent(new Event('input', {bubbles:true}));}", at)
+            await expect(video).to_have_js_property("paused", True)
+            assert abs(await video.evaluate("v => v.currentTime") - at) < 0.001
             assert (await video.get_attribute("src")).startswith("blob:")
             await frame.locator("#compare").click()
             await expect(frame.locator("#players video")).to_have_count(2)

@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from .backend import Backend
 from .models import Grant, Scene, UnfoldError
 from .store import Store, digest, uid, write_all
+from .timing import FPS, encoded_frames
 
 
 class Production:
@@ -38,7 +39,8 @@ class Production:
 
             if digest(Path(reference["path"])) != reference["sha256"]:
                 raise UnfoldError("MATERIAL_CHANGED", "Reference changed before inspection.")
-            times = [0, request["brief"]["duration"] / 2, request["brief"]["duration"] - 0.1][
+            last = encoded_frames(request["brief"]["duration"]) - 1
+            times = list(dict.fromkeys([0, (last // 2) / FPS, last / FPS]))[
                 : max(0, self.grant.max_frames - 1)
             ]
             frames = []

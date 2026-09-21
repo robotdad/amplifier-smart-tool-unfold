@@ -30,10 +30,22 @@ requires:
 # Unfold
 
 The Python library is the product. The CLI and optional loopback dashboard adapt
-the same operations. Compositions are 1280×720 at 30 fps, lasting 5–60 seconds.
+the same operations. Compositions are 1280×720 at 30 fps, lasting one frame (1/30 second) through 60 seconds.
 The authoring profile supports text, cards, paths, polygons, circles, arcs, image
 assets, stroke drawing, equal-point-count path morphing and camera motion. An embedded Amplifier Agent creates and
 refines compositions; deterministic operations manage assets, packs and delivery.
+
+Requested durations are rounded to the nearest whole 30-fps frame, with exact
+half-frame ties rounded up, and stored as frame count / 30. A 2-second bumper is
+60 frames; 2.5 seconds is 75; 2.52 seconds becomes 76 frames (2.533333… seconds).
+Values below 1/30 second or above 60 seconds are rejected before rounding. The
+general-purpose default remains 20 seconds. New briefs, scenes, review bounds,
+video/overlay artifacts and handoffs share this canonical duration. Encoded
+`frame_count` verifies that span; container duration displays can round to their
+clock precision. Existing retained source keeps its authored timing on re-render.
+Sampling chooses the frame containing each requested time; returned `time` is the
+frame timestamp and `requested_time` preserves the request. Times must precede
+the end; the final frame starts at duration minus 1/30 second.
 
 Studio review includes full-width Single, synchronized Compare, retained drafts,
 bounded direct refinement, cancellation and observable outcomes. Identity ZIPs carry

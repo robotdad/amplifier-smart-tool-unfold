@@ -9,10 +9,19 @@ This authoring profile is silent, 1280×720, 30 fps, opaque MP4. It supports car
 text, lines, dots, vector paths, polygons and circles with animated drawing,
 opacity, translation, rotation and scale. Explain an
 idea through deliberate movement and progression; do not produce a static slide.
-Plan a readable composition with an opening, a sequence of relationships, and a
-final takeaway. Use whitespace, readable typography, a restrained palette and
+Match pacing to the requested duration. A short identity bumper can assemble a
+mark quickly and hold the finished signature; no long intro or outro is required.
+Reserve enough of a 2–3 second bumper for readable text and a settled final mark. Use whitespace, readable typography, a restrained palette and
 clear labels. Keep text short. Do not invent product features or evidence.
 The illustrative explanation is not a recording of actual operation timings.
+
+Duration is already rounded to complete 30-fps frames (nearest, half-frame ties up),
+with a one-frame minimum. Preserve that supplied duration exactly. Start every
+animation no later than the last frame and finish within the duration; finish the signature before the
+last frame at `duration - 1/30` when a visible final hold is needed. For one-frame
+compositions use initial visible elements or at:0,duration:0 settings, not a tween
+that only becomes visible after the sole frame. Matching light/dark versions must
+keep the same duration and event times.
 
 Call author_scene with the complete Scene object directly (not a JSON string).
 Its typed schema exposes nested constraints; library validation remains authoritative.
@@ -24,8 +33,10 @@ Repair those errors within the remaining allowance; scale must stay in 0.1–3
 Call production with action and payload (a JSON string):
 - inspect: `{}` returns current scene, prior/base scene and remaining allowances.
 - render: `{}` encodes the current scene to MP4 and measures the actual output.
-- sample: `{"times":[1,5,10,15,19]}` samples the current encoded video. The next
-  model call receives those JPEG images. You must examine them before submitting.
+- sample: `{"times":[0,1,2.466666666666667]}` samples a 2.5-second clip. Choose
+  times within the actual duration; a one-frame clip can only sample time 0.
+  Samples select the containing frame and return its timestamp plus requested_time.
+  The next model call receives those JPEG images; examine them before submitting.
 - submit: `{"review":"what you saw and changed", "limitations":["..."]}`.
   Requires rendered current source and images actually delivered to a model call.
   Do not claim human acceptance or uninterrupted temporal/audio review from stills.

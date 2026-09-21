@@ -2,11 +2,13 @@
 
 import json
 import math
+from fractions import Fraction
 from pathlib import Path
 
 from .backend import run
 from .models import Scene, UnfoldError
 from .store import digest, portable_archive, uid
+from .timing import FPS, encoded_frames
 
 
 def media_info(path):
@@ -27,6 +29,8 @@ def media_info(path):
                     "pix_fmt",
                     "sample_rate",
                     "channels",
+                    "duration",
+                    "nb_frames",
                 )
                 if k in s
             }
@@ -160,7 +164,9 @@ class Delivery:
                 "MATERIAL_CHANGED", "Delivery input changed. Configure a new delivery deliberately."
             )
         directory = self.store.workspace(uid())
-        scene = Scene.model_validate_json((Path(rev["source_path"]) / "scene.json").read_text())
+        scene = Scene.model_validate_json(
+            (Path(rev["source_path"]) / "scene.json").read_text(), context={"retained_source": True}
+        )
         # The explicit overlay profile removes only the canvas background, never colored elements.
         scene.background = "transparent"
         source = directory / "source"
@@ -211,6 +217,8 @@ class Delivery:
                 str(d["duration"]),
                 "-r",
                 "30",
+                "-frames:v",
+                str(encoded_frames(d["duration"])),
                 "-c:v",
                 "libx264",
                 "-pix_fmt",
@@ -221,14 +229,20 @@ class Delivery:
             ]
             run(args, timeout=240)
         info = media_info(output)
-        if abs(info["duration"] - d["duration"]) > 0.1:
+        videos = [s for s in info["streams"] if s["codec_type"] == "video"]
+        expected_frames = encoded_frames(d["duration"])
+        if (len(videos) != 1 or int(videos[0].get("nb_frames", 0)) != expected_frames or
+                Fraction(videos[0]["avg_frame_rate"]) != FPS or
+                abs(float(videos[0]["duration"]) - expected_frames / FPS) > 0.0001 or
+                abs(info["duration"] - expected_frames / FPS) > 0.1):
             raise UnfoldError("INVALID_RENDER", "Delivery duration did not match.")
         artifact = self._artifact(
             rev["id"],
             output,
             {
                 "sha256": digest(output),
-                "duration": info["duration"],
+                "duration": expected_frames / FPS,
+                "frame_count": expected_frames,
                 "streams": info["streams"],
                 "alpha": mode == "overlay",
                 "width": 1280,

@@ -16,7 +16,7 @@ CAPABILITY_HELP = {
             "request_id": "0123456789abcdef0123456789abcdef",
         },
         "Retained job ID and status; poll review-state for the result.",
-        "Requires a prepared renderer, smart dependencies and explicit bounded disclosure authority. Exact retries never relaunch; changing input under the same request_id fails. Closing a view does not cancel work. Use cancel-job and inspect its terminal state.",
+        "Requires a prepared renderer, smart dependencies and explicit bounded disclosure authority. Duration supports 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up. Exact retries never relaunch; changing input under the same request_id fails. Closing a view does not cancel work. Use cancel-job and inspect its terminal state.",
     ),
     "cancel-job": (
         "Request cancellation of owned creation or refinement",
@@ -46,7 +46,7 @@ CAPABILITY_HELP = {
         "Inspect encoded frames without a model",
         {"artifact_id": "ARTIFACT", "times": [1, 3]},
         "Artifact hash and PNG frame paths, timestamps and hashes.",
-        "Choose 1–12 times before the output ends. Requires FFmpeg/FFprobe and intact media. Samples do not inspect audio or continuous motion.",
+        "Choose 1–12 times before the output ends. Each selects the containing frame; time is its exact timestamp and requested_time preserves your input. Requires FFmpeg/FFprobe and intact media. Samples do not inspect audio or continuous motion.",
     ),
     "update-asset": (
         "Update an asset's sharing declarations",
@@ -370,7 +370,7 @@ COMMAND_HELP = {
         "Animate a new explanation",
         "unfold create --brief brief.json --grant grant.json --request-id 0123456789abcdef0123456789abcdef",
         "Operation record; completed status includes project_id and revision_id.",
-        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request.",
+        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Durations support 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up; the default stays 20 seconds. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request.",
     ),
     "revise": (
         "Apply a change while retaining the earlier composition",

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .models import Scene, UnfoldError
 from .store import digest, write_json
+from .timing import FPS, encoded_frames, sample_frame
 
 
 def geometry(element):
@@ -135,7 +136,7 @@ class Backend:
     def author(self, scene: Scene, directory, resources=None):
         self.require()
         # Canonical numeric types make authored bytes stable across JSON round trips.
-        scene = Scene.model_validate(scene.model_dump())
+        scene = Scene.model_validate(scene.model_dump(), context={"retained_source": True})
         directory = Path(directory)
         directory.mkdir(exist_ok=True)
         resources = resources or {}
@@ -322,7 +323,9 @@ window.__timelines.unfold=tl;
     def render(self, directory, output, alpha=False):
         self.require()
         # Regenerate executable bytes from validated scene data before any browser execution.
-        scene = Scene.model_validate_json((Path(directory) / "scene.json").read_text())
+        scene = Scene.model_validate_json(
+            (Path(directory) / "scene.json").read_text(), context={"retained_source": True}
+        )
         expected = self.source_hash(directory)
         with tempfile.TemporaryDirectory(
             prefix="unfold-validate-", dir=Path(directory).parent
@@ -366,8 +369,9 @@ window.__timelines.unfold=tl;
         if (
             meta["width"] != 1280
             or meta["height"] != 720
-            or abs(meta["duration"] - scene.duration) > 0.05
-            or Fraction(meta["fps"]) != 30
+            or meta["frame_count"] != encoded_frames(scene.duration)
+            or abs(meta["encoded_duration"] - meta["duration"]) > 0.0001
+            or Fraction(meta["fps"]) != FPS
         ):
             raise UnfoldError(
                 "INVALID_RENDER", "Rendered dimensions or duration do not match source."
@@ -376,7 +380,7 @@ window.__timelines.unfold=tl;
             "source_sha256": expected,
             "sha256": digest(output),
             **meta,
-            "method": "ffprobe of encoded MP4",
+            "method": "ffprobe of encoded video stream",
             "audio": "silent",
             "alpha": alpha,
         }
@@ -403,10 +407,14 @@ window.__timelines.unfold=tl;
             raise UnfoldError("INVALID_RENDER", "Expected an alpha channel.")
         if any(s["codec_type"] == "audio" for s in data["streams"]):
             raise UnfoldError("INVALID_RENDER", "This profile promises silent output.")
+        frames = int(videos[0]["nb_frames"])
+        rate = Fraction(videos[0]["avg_frame_rate"])
         return {
+            "frame_count": frames,
+            "encoded_duration": float(videos[0]["duration"]),
             "width": videos[0]["width"],
             "height": videos[0]["height"],
-            "duration": float(data["format"]["duration"]),
+            "duration": frames / float(rate),
             "fps": videos[0]["avg_frame_rate"],
             "bytes": Path(path).stat().st_size,
         }
@@ -419,16 +427,17 @@ window.__timelines.unfold=tl;
         directory.mkdir(exist_ok=True)
         result = []
         for i, time in enumerate(times):
+            frame = min(sample_frame(time, float(Fraction(meta["fps"]))), meta["frame_count"] - 1)
             path = directory / f"frame-{i}.jpg"
             run(
                 [
                     "ffmpeg",
                     "-v",
                     "error",
-                    "-ss",
-                    str(time),
                     "-i",
                     str(video),
+                    "-vf",
+                    f"select=eq(n\\,{frame})",
                     "-frames:v",
                     "1",
                     "-q:v",
@@ -438,5 +447,6 @@ window.__timelines.unfold=tl;
                 ],
                 timeout=30,
             )
-            result.append({"time": time, "path": str(path), "sha256": digest(path)})
+            result.append({"time": frame / float(Fraction(meta["fps"])), "requested_time": time,
+                           "path": str(path), "sha256": digest(path)})
         return result

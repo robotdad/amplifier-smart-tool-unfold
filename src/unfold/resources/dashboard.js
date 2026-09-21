@@ -371,7 +371,8 @@ function drawPlayers() {
       );
       $("players").append(p);
     });
-  $("scrub").max = current()?.brief.duration || 60;
+  const duration = current()?.brief.duration || 60;
+  for (const id of ["scrub", "at", "end"]) $(id).max = duration;
   $("selection").textContent = current()
     ? revisionName(current())
     : "No revision";

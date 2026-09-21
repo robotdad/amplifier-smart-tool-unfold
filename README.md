@@ -100,7 +100,9 @@ The image above is the real review dashboard showing **From spark to system**,
 a 28-second promotional animation created and rendered through Unfold’s embedded
 agent. It is a product screenshot, not an interface mockup.
 
-Unfold currently makes 5–60 second compositions at 1280×720 and 30 fps. It supports
+Unfold makes compositions from one frame (1/30 second) through 60 seconds at
+1280×720 and 30 fps, including 2- and 2.5-second identity bumpers. Durations round
+to the nearest complete frame, with half-frame ties rounding up. It supports
 animated geometry, text, images, stroke drawing and camera movement. This is an
 early implementation, not a full video timeline editor. Creative quality depends
 on the model and brief; watch the animation before sharing it. Frame samples and
