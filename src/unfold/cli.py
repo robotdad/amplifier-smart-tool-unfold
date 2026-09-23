@@ -56,7 +56,7 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("manifest", "schemas", "backend-package", "doctor", "projects"):
         commands.add_parser(name, help="Deterministic: " + name)
-    for name in ("inspect", "render", "cancel"):
+    for name in ("inspect", "render", "cancel", "reconcile"):
         commands.add_parser(name).add_argument("id")
     p = commands.add_parser("observe")
     p.add_argument("--after", type=int, default=0)
@@ -121,7 +121,7 @@ def main():
                     Grant.model_validate_json(Path(args.grant).read_text()),
                     request_id=args.request_id,
                 )
-            elif command in {"inspect", "render", "cancel"}:
+            elif command in {"inspect", "render", "cancel", "reconcile"}:
                 result = getattr(library, command)(args.id)
             elif command == "rename":
                 result = library.rename(args.id, args.name)
@@ -136,7 +136,7 @@ def main():
             else:
                 result = getattr(library, command)()
         print(json.dumps(result, indent=2))
-        if isinstance(result, dict) and result.get("status") in {"failed", "cancelled"}:
+        if isinstance(result, dict) and result.get("status") in {"failed", "cancelled", "interrupted"}:
             sys.exit(1)
     except KeyboardInterrupt:
         pass

@@ -43,6 +43,7 @@ def manifest():
                     "feedback",
                     "address-feedback",
                     "cancel",
+                    "reconcile",
                     "dashboard",
                     "manifest",
                     "schemas",
@@ -143,7 +144,7 @@ Replace uppercase IDs and example paths with retained IDs and accessible local p
 
 CLI results go to stdout as JSON; help is text. Recognized input/domain failures
 emit a structured error on stderr and exit 1; bad CLI syntax exits 2. Returned
-failed/cancelled operations also exit 1. A job acknowledgement is not completion.
+failed/cancelled/interrupted operations also exit 1. A job acknowledgement is not completion.
 Read its durable status before using an output or requesting another attempt.
 
 ## Related guidance

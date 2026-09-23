@@ -1,9 +1,41 @@
 """Inspect and stop owned workers without platform-specific liveness signals."""
 
 import os
-import signal
+import socket
 
 import psutil
+
+
+def process_identity(pid=None):
+    """Persist birth identity, not just a reusable PID (trusted local store)."""
+    process = psutil.Process(os.getpid() if pid is None else pid)
+    return {
+        "pid": process.pid,
+        "created": process.create_time(),
+        "boot": psutil.boot_time(),
+        "host": socket.gethostname(),
+    }
+
+
+def owned_process(identity):
+    """Return (live/absent/mismatch/unknown, verified psutil handle or None)."""
+    if not identity or not all(k in identity for k in ("pid", "created", "boot", "host")):
+        return "unknown", None
+    if identity["host"] != socket.gethostname():
+        return "unknown", None
+    if identity["boot"] != psutil.boot_time():
+        return "mismatch", None
+    try:
+        process = psutil.Process(identity["pid"])
+        if process.create_time() != identity["created"]:
+            return "mismatch", None
+        if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
+            return "absent", None
+        return "live", process
+    except psutil.NoSuchProcess:
+        return "absent", None
+    except psutil.AccessDenied:
+        return "unknown", None
 
 
 def is_alive(pid):
@@ -23,53 +55,77 @@ def stop_tree(process):
     if process.pid == os.getpid():
         raise ValueError("Cannot stop the calling process")
     try:
-        if not process.is_running():
-            return
-        if os.name != "nt" and os.getpgid(process.pid) == process.pid:
-            os.killpg(process.pid, signal.SIGKILL)
-            return
-        # Freeze the producer before collecting children so it cannot start more work.
-        process.suspend()
+        if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
+            return False
+        # Never signal a numeric process group: its leader may have exited and its
+        # PID may have been reused. psutil's mutating methods check birth identity.
+        frozen = []
+        complete = True
+
+        def freeze(parent):
+            nonlocal complete
+            if parent.status() == psutil.STATUS_ZOMBIE:
+                raise psutil.NoSuchProcess(parent.pid)
+            parent.suspend()
+            frozen.append(parent)
+            for child in parent.children():
+                try:
+                    freeze(child)
+                except psutil.NoSuchProcess:
+                    complete = False
+
         try:
-            children = process.children(recursive=True)
-            for child in children:
+            freeze(process)
+            for child in reversed(frozen):
                 try:
                     child.kill()
                 except psutil.NoSuchProcess:
                     pass
-            process.kill()
         except Exception:
-            try:
-                process.resume()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+            for child in reversed(frozen):
+                try:
+                    child.resume()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
             raise
-        _, alive = psutil.wait_procs([*children, process], timeout=10)
+        _, alive = psutil.wait_procs(frozen, timeout=3)
+        alive = [p for p in alive if is_alive(p.pid) and p.is_running()]
         if alive:
             raise TimeoutError("Owned worker processes did not stop")
+        return complete
     except (psutil.NoSuchProcess, ProcessLookupError):
-        pass
+        # A vanished root is not proof that its descendants stopped.
+        return False
 
 
 def stop_worker(process):
     if process is None:
-        return
+        return True
+    if process.poll() is not None:
+        return False
+    stopped = False
     try:
-        if os.name != "nt":
-            # The worker owns a session; descendants can outlive its group leader.
-            os.killpg(process.pid, signal.SIGKILL)
-        elif process.poll() is None:
-            stop_tree(psutil.Process(process.pid))
+        identity = getattr(process, "_unfold_identity", None)
+        if identity:
+            state, owned = owned_process(identity)
+            if state == "live":
+                stopped = stop_tree(owned)
+            elif state == "unknown":
+                raise RuntimeError("Cannot verify worker ownership; cleanup is incomplete")
+        else:
+            # A still-unreaped Popen child cannot have its PID reused.
+            stopped = stop_tree(psutil.Process(process.pid))
     except (psutil.NoSuchProcess, ProcessLookupError):
         pass
     process.wait(timeout=10)
+    return stopped
 
 
-def stop_recorded_worker(pid, request_path):
-    try:
-        process = psutil.Process(pid)
+def stop_recorded_worker(pid, request_path, identity=None):
+    """Legacy PID/path alone is insufficient authority to signal any process."""
+    state, process = owned_process(identity)
+    if state == "live" and process.pid == pid:
         argv = process.cmdline()
         if len(argv) >= 4 and argv[1:4] == ["-m", "unfold.worker", str(request_path)]:
-            stop_tree(process)
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        return
+            return stop_tree(process)
+    return False

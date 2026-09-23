@@ -162,8 +162,13 @@ filesystem material is available to the embedded agent. This profile requires a
 vision-capable model; a false capability declaration will not make a text-only model
 see images. `Grant` limits calls, tool actions, renders, frames, bytes, response tokens
 and wall time; `unfold schemas` exposes bounds. Models are chosen explicitly; no
-model fallback or authentication is initiated. Set `GEMINI_API_KEY`, `OPENAI_API_KEY`
-or `ANTHROPIC_API_KEY` for the selected provider. Credentials never enter scene data.
+model fallback or authentication is initiated. For Gemini, the first nonempty
+`GEMINI_API_KEY`, then `GOOGLE_API_KEY`, wins. Doctor, provider configuration and
+worker environments use that same precedence. OpenAI uses `OPENAI_API_KEY`;
+Anthropic uses `ANTHROPIC_API_KEY`. Only the selected provider's credential reaches
+the worker. Aliases never change `Grant.provider` or `Grant.model`.
+Doctor reports presence and the chosen variable name, never the value.
+Credentials never enter scene data.
 
 The embedded agent authors validated scene data. Code emits executable HyperFrames
 source; arbitrary model JavaScript, remote assets and custom CSS are not accepted.
@@ -184,12 +189,61 @@ original. Use `remove` for managed deletion, never delete returned paths as an A
 All results are JSON-compatible dictionaries/lists; validated creative inputs are
 `Brief` and `Grant` objects or matching dictionaries. Errors use `UnfoldError` with
 code, message and remedy. CLI stdout is JSON; diagnostics use stderr, and errors or
-failed/cancelled operations exit nonzero. Closed stdin never triggers a prompt.
+failed/cancelled/interrupted operations exit nonzero. Closed stdin never triggers a prompt.
 Use library return values for chaining. `--help` prints this skill, `-h` prints a
 synopsis. Every subcommand’s `--help` is a capability skill with arguments, examples,
 results and recovery guidance; `-h` is its short flag reference.
 
 Global CLI options `--library PATH` and `--backend PATH` precede the subcommand.
+
+### Interrupted direct creation and revision
+
+Keep a `--request-id` before launching. If the calling process or connection is
+lost, use the **same library** and operation ID:
+
+```sh
+unfold --library /chosen/library inspect OPERATION
+unfold --library /chosen/library observe --after 0
+unfold --library /chosen/library reconcile OPERATION
+# Only if stopping is intended:
+unfold --library /chosen/library cancel OPERATION
+unfold --library /chosen/library reconcile OPERATION
+```
+
+`inspect` and `observe` are passive retained reads, not liveness checks.
+`reconcile(operation_id)` is deterministic library behavior: it never launches
+intelligence or retries an external call. A still-live launcher or bounded owned
+worker remains active. A worker supervisor enforces the original deadline even
+if the caller disappears. After exit, reconciliation validates an existing result
+through the same commit checks as normal completion, or records `interrupted`
+without discarding local evidence. Committed revisions and terminal failures are
+not overwritten. Exact request retries return the retained operation, never a new
+dispatch; changing input under that ID is a conflict.
+
+`cancelling` means requested, not stopped. Reconciliation can stop birth-verified
+owned workers and observed descendants; only successful cleanup reports
+`cancelled`. Missing workers can yield `interrupted`, not a cleanup guarantee.
+Uncertain external calls may already have completed. Review retained events and
+results before explicitly authorizing a new operation and budget.
+
+Supervisor exit alone is not cleanup: the launcher and reconciler separately
+check the retained execution child's birth identity before terminalizing failure.
+A cleanup denial remains `cancelling` with `cleanup_status: pending` and
+`recovery: cleanup_incomplete`; retry **reconcile**, never generation.
+If an execution root disappears, its descendants may have been reparented and
+cannot be safely rediscovered from a PID or process-group guess. Cancellation
+then reports `interrupted` with `cleanup_status: unverified`, even if the remaining
+supervisor was stopped. `verified_observed` covers the birth-verified execution
+root and descendants observed during shutdown, not arbitrary detached processes.
+Unrecorded or already-detached descendants require independently established
+ownership before any manual cleanup; Unfold does not certify their absence.
+
+Legacy records with only a PID, inaccessible process identity, or another host's
+identity cannot prove ownership: reconciliation returns `ownership_unknown`
+without killing or pretending cleanup completed. A reused PID is never signalled.
+No automatic paid replay or broad process cleanup is available. Review jobs use
+`call cancel-job` and `call review-state`; their lost-launcher recovery delegates
+to the same operation reconciliation.
 
 `max_response_tokens` is a per-response ceiling. OpenAI calls use non-streaming
 requests with no automatic truncation continuation or raised-token recovery.

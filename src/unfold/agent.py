@@ -7,12 +7,12 @@ only Unfold's production capability is mounted in the creative session.
 import base64
 import copy
 import json
-import os
 import sys
 import tempfile
 from importlib.resources import files
 from pathlib import Path
 
+from .credentials import CREDENTIALS, credential
 from .models import Scene, UnfoldError
 from .store import digest
 
@@ -195,6 +195,27 @@ class Gate:
         return response
 
 
+def provider_entry(grant):
+    revision, _ = PROVIDERS[grant.provider]
+    _, api_key = credential(grant.provider)
+    if not api_key:
+        raise UnfoldError(
+            "PROVIDER_UNAVAILABLE",
+            "Selected provider credential is unavailable.",
+            "Set " + " or ".join(CREDENTIALS[grant.provider]) + ".",
+        )
+    return {
+        "module": "provider-" + grant.provider,
+        "source": f"git+https://github.com/microsoft/amplifier-module-provider-{grant.provider}@{revision}",
+        "config": {
+            "api_key": api_key,
+            "default_model": grant.model,
+            "max_retries": 0,
+            "use_streaming": False,
+        },
+    }
+
+
 async def execute(owner):
     try:
         from amplifier_agent_lib.engine import Engine
@@ -207,23 +228,7 @@ async def execute(owner):
         raise UnfoldError(
             "MISSING_PREREQUISITE", "Amplifier Agent is unavailable.", "Install the smart extra."
         ) from None
-    revision, variable = PROVIDERS[owner.grant.provider]
-    if not os.environ.get(variable):
-        raise UnfoldError(
-            "PROVIDER_UNAVAILABLE",
-            "Selected provider credential is unavailable.",
-            "Set " + variable + ".",
-        )
-    entry = {
-        "module": "provider-" + owner.grant.provider,
-        "source": f"git+https://github.com/microsoft/amplifier-module-provider-{owner.grant.provider}@{revision}",
-        "config": {
-            "api_key": os.environ[variable],
-            "default_model": owner.grant.model,
-            "max_retries": 0,
-            "use_streaming": False,
-        },
-    }
+    entry = provider_entry(owner.grant)
 
     async def turn(ctx):
         prepared = copy.copy(engine.session)

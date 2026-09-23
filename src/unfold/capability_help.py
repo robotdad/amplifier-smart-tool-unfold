@@ -309,8 +309,8 @@ COMMAND_HELP = {
     "doctor": (
         "Check local prerequisites",
         "unfold doctor",
-        "Library path, backend checks and provider credential-presence booleans.",
-        "Does not authenticate or prove a credential/model works. Resolve missing tools before rendering; never paste credentials into a brief.",
+        "Library path, backend checks, provider credential-presence booleans and selected environment-variable names (never values).",
+        "Does not authenticate or select a provider/model. Gemini uses the first nonempty GEMINI_API_KEY, then GOOGLE_API_KEY. The same precedence applies to workers. Grant.provider and Grant.model remain explicit. Never paste credentials into a brief.",
     ),
     "projects": (
         "Find work to reopen",
@@ -322,13 +322,13 @@ COMMAND_HELP = {
         "Inspect retained work and integrity",
         "unfold inspect REVISION",
         "Record and, for revisions, resolved artifacts and source integrity.",
-        "ID can identify a retained record. Changed/missing bytes do not retain valid checks. Restore originals or make a deliberate new input; inspection never repairs or starts model work.",
+        "ID can identify a retained record, including an operation. Inspection is passive: a recorded running state is not a fresh liveness check. Use reconcile OPERATION after launcher loss. Changed/missing bytes invalidate checks; inspection never repairs or starts model work.",
     ),
     "observe": (
         "Discover changes since a caller's last visit",
         "unfold observe --after 0",
         "Ordered durable events with cursors.",
-        "Persist the returned cursor for continuation. Reads do not launch work; use inspect to resolve referenced IDs.",
+        "Persist the returned cursor for continuation. Reads do not launch or reconcile work; use inspect to resolve referenced IDs. A quiet log does not prove a worker stopped. Use reconcile OPERATION to settle interrupted execution without paid replay.",
     ),
     "rename": (
         "Rename a project, pack, asset or output",
@@ -364,7 +364,13 @@ COMMAND_HELP = {
         "Request cancellation of a synchronous creative operation",
         "unfold cancel OPERATION",
         "Operation with cancellation requested.",
-        "A live supervisor must stop work and record the terminal outcome; cancelling is not cancelled. Inspect the operation. For dashboard jobs use call cancel-refinement.",
+        "cancelling is a request, not completed cleanup. Inspect the operation; run reconcile OPERATION to stop only birth-verified owned processes. Cleanup denial remains cancelling/cleanup_status=pending for another reconciliation. A vanished execution root means interrupted/cleanup_status=unverified, not proof its reparented descendants stopped. Unknown legacy ownership is reported rather than signalled. For dashboard jobs use call cancel-job and review-state.",
+    ),
+    "reconcile": (
+        "Recover a direct-create or revise operation without replaying generation",
+        "unfold reconcile OPERATION",
+        "Retained operation: completed, failed, cancelled, interrupted, or active with a recovery explanation.",
+        "No model calls or new execution. A live launcher with a live supervisor or bounded live worker remains active unless cancellation was requested. Supervisor loss checks the execution child separately, even with a live launcher. Cleanup denial stays active and recoverable; a vanished execution root yields interrupted with unverified descendant cleanup, never a cancelled guarantee. After worker exit, validate and commit its retained result once, or record interruption with uncertain external calls disclosed. Prior terminal outcomes are unchanged. PID birth mismatch never signals the replacement process; unknown ownership remains unresolved. Legacy PID-only records cannot safely prove ownership. inspect and observe remain passive. Use cancel then reconcile to stop verified work; repeated reconcile never launches or overwrites completed work.",
     ),
     "create": (
         "Animate a new explanation",

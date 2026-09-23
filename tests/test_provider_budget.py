@@ -210,7 +210,8 @@ from types import SimpleNamespace
 from amplifier_core.message_models import ChatRequest, Message
 import unfold.agent
 from unfold.agent import Gate
-from unfold.worker import main
+from unfold.worker import execute_request
+from pathlib import Path
 async def execute(owner):
     result = await owner.author_tool().execute({"title":"rejected","duration":20,
         "explanation":"fixture", "elements":[{"id":"shape","kind":"text","x":0,"y":0,
@@ -224,7 +225,7 @@ async def execute(owner):
                 "max_output_tokens":request.max_output_tokens})
     await Gate(Provider(), owner).complete(ChatRequest(messages=[Message(role="user", content="fixture")]))
 unfold.agent.execute = execute
-main()
+execute_request(Path(sys.argv[-1]))
 '''
     popen = subprocess.Popen
     children = []

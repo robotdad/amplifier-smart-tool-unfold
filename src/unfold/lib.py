@@ -12,14 +12,16 @@ from pathlib import Path
 
 from .assets import Assets
 from .backend import Backend
+from .credentials import CREDENTIALS, credential, worker_environment
 from .delivery import Delivery
 from .models import Brief, Grant, UnfoldError
-from .processes import stop_worker
+from .processes import process_identity, stop_worker
+from .recovery import Recovery
 from .review import Review
 from .store import Store, digest, uid, write_json
 
 
-class Unfold(Review, Assets, Delivery):
+class Unfold(Recovery, Review, Assets, Delivery):
     def __init__(self, library=None, backend=None):
         self.store = Store(library or Path.home() / ".local/share/unfold")
         self.backend = Backend(backend or Path.home() / ".local/share/unfold-backend")
@@ -323,13 +325,9 @@ class Unfold(Review, Assets, Delivery):
             "library": str(self.store.root),
             "backend": self.backend.doctor(),
             "providers": {
-                name: bool(os.getenv(env))
-                for name, env in (
-                    ("gemini", "GEMINI_API_KEY"),
-                    ("openai", "OPENAI_API_KEY"),
-                    ("anthropic", "ANTHROPIC_API_KEY"),
-                )
+                name: bool(credential(name)[1]) for name in CREDENTIALS
             },
+            "credential_sources": {name: credential(name)[0] for name in CREDENTIALS},
         }
 
     def projects(self):
@@ -676,8 +674,49 @@ class Unfold(Review, Assets, Delivery):
         }
 
     def _produce(self, brief, grant, base=None, feedback="", request_id=None, target=None):
-        brief = Brief.model_validate(brief)
+        # Canonicalize default numeric values as well as JSON-provided values:
+        # Python Brief() and its CLI JSON round-trip must be the same request.
+        brief = Brief.model_validate(Brief.model_validate(brief).model_dump())
         grant = Grant.model_validate(grant)
+        input_payload = {
+            "brief": brief.model_dump(), "grant": grant.model_dump(),
+            "base": base["id"] if base else None, "feedback": feedback,
+            "feedback_target": target,
+        }
+        input_hash = hashlib.sha256(json.dumps(input_payload, sort_keys=True).encode()).hexdigest()
+        if request_id:
+            try:
+                previous = self.store.get(request_id)
+            except UnfoldError as exc:
+                if exc.code != "NOT_FOUND":
+                    raise
+            else:
+                if previous.get("kind") != "operation":
+                    raise UnfoldError("REQUEST_CONFLICT", "Request identity belongs to other work.")
+                if "input_sha256" in previous:
+                    if previous["input_sha256"] != input_hash:
+                        raise UnfoldError(
+                            "REQUEST_CONFLICT", "Request identity was already used for different input."
+                        )
+                else:
+                    # Older records fingerprinted Python numeric defaults differently
+                    # from their JSON round-trip. Compare their retained typed payload,
+                    # without rewriting the record or requiring today's prerequisites.
+                    prior = {key: previous.get(key) for key in input_payload}
+                    candidate = input_payload
+                    if brief.identity_version:
+                        prior = {**prior, "brief": {
+                            k: v for k, v in prior["brief"].items() if k != "identity"
+                        }}
+                        candidate = {**candidate, "brief": {
+                            k: v for k, v in candidate["brief"].items() if k != "identity"
+                        }}
+                    if prior != candidate:
+                        raise UnfoldError(
+                            "REQUEST_CONFLICT", "Request identity was already used for different input."
+                        )
+                # Recovery is not conditional on today's renderer or asset availability.
+                return previous
         if brief.identity_version:
             identity = self.store.get(brief.identity_version, "pack_version")
             if identity["prerequisites"]:
@@ -696,7 +735,6 @@ class Unfold(Review, Assets, Delivery):
                 "This creative path requires context and sampled-frame disclosure to a vision model.",
                 "Supply an explicit Grant permitting context and frames, with vision=True.",
             )
-        self.backend.require()
         operation_id = request_id or uid()
         directory = self.store.workspace(operation_id)
         payload = {
@@ -710,18 +748,20 @@ class Unfold(Review, Assets, Delivery):
         with self.store.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
-                previous = self.store.get(operation_id, "operation", db)
+                previous = self.store.get(operation_id, db=db)
             except UnfoldError as exc:
                 if exc.code != "NOT_FOUND":
                     raise
             else:
-                if previous["request_sha256"] != request_hash:
+                if (previous.get("kind") != "operation"
+                        or previous.get("request_sha256") != request_hash):
                     raise UnfoldError(
                         "REQUEST_CONFLICT", "Request identity was already used for different input."
                     )
                 return (
                     previous  # Includes uncertain/running/failed states; never silently re-spend.
                 )
+            self.backend.require()
             jobs = db.execute("SELECT data FROM records WHERE kind='review_job'").fetchall()
             if any(
                 j.get("operation_id") == operation_id and j["status"] in ("cancelled", "cancelling")
@@ -751,6 +791,9 @@ class Unfold(Review, Assets, Delivery):
                 "project_id": project["id"],
                 "status": "running",
                 "request_sha256": request_hash,
+                "input_sha256": input_hash,
+                "launcher": process_identity(),
+                "deadline": time.time() + grant.max_seconds,
                 **payload,
             }
             self.store.put("operation", operation, db)
@@ -824,102 +867,34 @@ class Unfold(Review, Assets, Delivery):
                     stdout=log,
                     stderr=log,
                     start_new_session=True,
-                    env={
-                        key: value
-                        for key, value in os.environ.items()
-                        if key
-                        in {
-                            "PATH",
-                            "HOME",
-                            "USER",
-                            "TMPDIR",
-                            "SYSTEMROOT",
-                            "VIRTUAL_ENV",
-                            "PYTHONPATH",
-                            {
-                                "gemini": "GEMINI_API_KEY",
-                                "openai": "OPENAI_API_KEY",
-                                "anthropic": "ANTHROPIC_API_KEY",
-                            }[grant.provider],
-                        }
-                    },
+                    env=worker_environment(grant.provider),
                 )
+                import psutil
+
+                try:
+                    process._unfold_identity = process_identity(process.pid)
+                except psutil.NoSuchProcess:
+                    process._unfold_identity = None
                 with self.store.connect() as db:
                     db.execute("BEGIN IMMEDIATE")
                     running = self.store.get(operation_id, "operation", db)
                     running["worker_pid"] = process.pid
+                    if process._unfold_identity:
+                        running["worker"] = process._unfold_identity
                     self.store.put("operation", running, db)
-                deadline = time.monotonic() + grant.max_seconds
                 while process.poll() is None:
-                    if self.store.get(operation_id, "operation")["status"] == "cancelling":
+                    if self.store.get(operation_id, "operation")["status"] != "running":
                         raise UnfoldError(
                             "CANCELLED",
                             "Operation was cancelled; prior revisions remain available.",
                         )
-                    if time.monotonic() > deadline:
+                    if time.time() > operation["deadline"]:
                         raise UnfoldError(
                             "RESOURCE_LIMIT", "Operation wall-clock allowance exhausted."
                         )
                     time.sleep(0.1)
-            result_path = directory / "result.json"
-            if not result_path.exists():
-                raise UnfoldError(
-                    "WORKER_FAILED",
-                    "The isolated Amplifier worker stopped without a result.",
-                    "Inspect the local worker log and prerequisites; retry requires a new request identity.",
-                )
-            result = json.loads(result_path.read_text())
-            if "error" in result:
-                raise UnfoldError(**result["error"])
-            source = directory / "source"
-            video = directory / "video.mp4"
-            if (
-                self.backend.source_hash(source) != result["source_sha256"]
-                or digest(video) != result["render"]["sha256"]
-            ):
-                raise UnfoldError("STALE_RESULT", "Source or video changed after agent inspection.")
-            self.backend.probe(video)
-            revision_id = uid()
-            artifact = self._artifact(revision_id, video, result["render"], project["name"])
-            revision = {
-                "id": revision_id,
-                "kind": "revision",
-                "project_id": project["id"],
-                "base_revision": base["id"] if base else None,
-                "identity_version": brief.identity_version,
-                "brief": brief.model_dump(),
-                "feedback": feedback,
-                "feedback_target": target,
-                "source": str(source.relative_to(self.store.root)),
-                "artifacts": [artifact["id"]],
-                "operation_id": operation_id,
-                **result,
-            }
-            with self.store.connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                operation = self.store.get(operation_id, "operation", db)
-                current = self.store.get(project["id"], "project", db)
-                if operation["status"] != "running":
-                    raise UnfoldError("CANCELLED", "Late result cannot commit after cancellation.")
-                if current["current_revision"] != project["current_revision"]:
-                    raise UnfoldError(
-                        "STALE_BASE",
-                        "Another operation committed first; result retained as uncommitted work.",
-                    )
-                current["current_revision"] = revision_id
-                current["revisions"].append(revision_id)
-                operation.update(status="completed", revision_id=revision_id)
-                for kind, record in (
-                    ("revision", revision),
-                    ("artifact", artifact),
-                    ("project", current),
-                    ("operation", operation),
-                ):
-                    self.store.put(kind, record, db)
-                self.store.event("completed", operation_id, {"revision_id": revision_id}, db)
-            return operation
+            return self._complete_operation(operation_id)
         except (Exception, KeyboardInterrupt) as exc:
-            self._stop_worker(process)
             error = (
                 exc
                 if isinstance(exc, UnfoldError)
@@ -928,16 +903,10 @@ class Unfold(Review, Assets, Delivery):
                     "Work stopped without a committed result.",
                 )
             )
-            operation = self.store.get(operation_id, "operation")
-            operation.update(
-                status="cancelled" if error.code == "CANCELLED" else "failed", error=error.as_dict()
-            )
-            with self.store.connect() as db:
-                self.store.put("operation", operation, db)
-                self.store.event(operation["status"], operation_id, error.as_dict(), db)
-            return operation
-        finally:
-            self._stop_worker(process)
+            # The Popen supervisor may already be dead while its separately
+            # recorded execution child still spends. Reconcile both roots before
+            # making the outcome terminal; failed cleanup must remain recoverable.
+            return self._stop_operation(operation_id, error)
 
     _stop_worker = staticmethod(stop_worker)
 

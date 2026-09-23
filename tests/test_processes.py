@@ -6,7 +6,7 @@ import time
 
 import psutil
 
-from unfold.processes import is_alive, stop_recorded_worker, stop_worker
+from unfold.processes import is_alive, process_identity, stop_recorded_worker, stop_worker
 
 
 def test_liveness_does_not_signal_live_process():
@@ -80,9 +80,15 @@ def test_recorded_worker_exact_request(tmp_path):
         start_new_session=True,
     )
     try:
-        stop_recorded_worker(process.pid, request.with_name("other.json"))
+        identity = process_identity(process.pid)
+        stop_recorded_worker(process.pid, request.with_name("other.json"), identity)
         assert process.poll() is None
-        stop_recorded_worker(process.pid, request)
+        # A matching command alone is not sufficient for legacy PID-only records.
+        assert not stop_recorded_worker(process.pid, request)
+        assert process.poll() is None
+        assert not stop_recorded_worker(process.pid, request, {**identity, "created": 0})
+        assert process.poll() is None
+        assert stop_recorded_worker(process.pid, request, identity)
         process.wait(timeout=10)
     finally:
         if process.poll() is None:

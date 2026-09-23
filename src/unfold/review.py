@@ -8,8 +8,10 @@ import sys
 import threading
 import time
 
+import psutil
+
 from .models import Brief, Grant, UnfoldError
-from .processes import is_alive, stop_recorded_worker
+from .processes import is_alive, owned_process, process_identity
 from .store import uid
 
 
@@ -484,6 +486,12 @@ class Review:
                 db.execute("BEGIN IMMEDIATE")
                 job = self.store.get(request_id, "review_job", db)
                 job["pid"] = child.pid
+                # A fast child may already have exited; its own admission also
+                # records this identity before running any operation.
+                try:
+                    job["owner"] = process_identity(child.pid)
+                except psutil.NoSuchProcess:
+                    pass
                 self.store.put("review_job", job, db)
         except OSError:
             job.update(
@@ -499,7 +507,7 @@ class Review:
             job = self.store.get(job_id, "review_job", db)
             if job["status"] != "queued":
                 return job
-            job.update(status="running", pid=os.getpid())
+            job.update(status="running", pid=os.getpid(), owner=process_identity())
             self.store.put("review_job", job, db)
         try:
             if job.get("mode") == "create":
@@ -578,7 +586,9 @@ class Review:
             if job["status"] not in ("queued", "running", "cancelling"):
                 continue
             alive = False
-            if job.get("pid"):
+            if job.get("owner"):
+                alive = owned_process(job["owner"])[0] in {"live", "unknown"}
+            elif job.get("pid"):
                 alive = is_alive(job["pid"])
             elif time.time() - job["created"] < 10:
                 alive = True
@@ -588,14 +598,19 @@ class Review:
                 operation = self.store.get(job["operation_id"], "operation")
             except UnfoldError:
                 operation = None
-            if operation and operation["status"] == "completed":
-                if job.get("feedback_id"):
+            if operation:
+                operation = self.reconcile(operation["id"])
+                if operation["status"] in ("running", "cancelling"):
+                    # A lost review launcher does not imply a lost creative worker.
+                    # Reconciliation cannot replay, kill unverified PIDs, or relabel
+                    # a still-live worker as terminal.
+                    continue
+                if operation["status"] == "completed" and job.get("feedback_id"):
                     self.address_feedback(job["feedback_id"], operation["revision_id"])
-                job.update(status="completed", result=operation)
+                job.update(status=operation["status"], result=operation)
+                if job.get("mode") == "create":
+                    job["project_id"] = operation["project_id"]
             else:
-                if operation:
-                    self.cancel(operation["id"])
-                    self._stop_recorded_worker(operation)
                 job.update(
                     status="interrupted",
                     error="Worker stopped. No automatic retry or additional spending.",
@@ -627,19 +642,3 @@ class Review:
             "deliveries": self.store.list("delivery"),
             "outputs": [self.artifact(a["id"]) for a in self.store.list("artifact")],
         }
-
-    def _stop_recorded_worker(self, operation):
-        """Recover an orphan only if its command still identifies this exact owned request."""
-        pid = operation.get("worker_pid")
-        if not pid:
-            return
-        expected = str(self.store.workspace(operation["id"]) / "request.json")
-        stop_recorded_worker(pid, expected)
-        operation.update(
-            status="failed",
-            error={
-                "code": "INTERRUPTED",
-                "message": "Supervisor stopped; owned worker cleanup requested.",
-            },
-        )
-        self.store.put("operation", operation)
