@@ -160,8 +160,7 @@ outcome = tool.create(
     grant,
 )
 if outcome["status"] == "completed":
-    revision = tool.inspect(outcome["revision_id"])
-    artifact = tool.artifact(revision["artifacts"][0])
+    artifact = tool.artifact(outcome["primary_artifact_id"])
 ```
 
 `Brief.context` is actual supplied content, not a filename the agent should discover.
@@ -204,6 +203,55 @@ synopsis. Every subcommand’s `--help` is a capability skill with arguments, ex
 results and recovery guidance; `-h` is its short flag reference.
 
 Global CLI options `--library PATH` and `--backend PATH` precede the subcommand.
+
+### Exact-file delivery
+
+For blocking creation, add `export_to="/existing/exports/The convergence loop.mp4"`
+to `tool.create(...)`, or `--export-to '/existing/exports/The convergence loop.mp4'`
+to `unfold create`. The parent must exist. This is an exact file, never a directory:
+matching extension is mandatory, spaces and valid Unicode are preserved, unsafe/device
+names are rejected. Destinations are not sent to intelligence.
+
+Completed operations retain `primary_artifact_id` and `outputs` (exact artifact and
+revision, role, format, SHA-256, suggested filename), also available in `inspect`
+and completed async `job.result`. Legacy missing/ambiguous initial outputs report
+`output_error`; choose an explicit artifact rather than assuming first/latest.
+Suggestions use NFKC, lowercase Unicode letters/numbers, hyphen separators and a
+180-byte UTF-8 stem bound, with an artifact-ID fallback. They do not rename existing
+download defaults and are not globally unique.
+
+Generation `status` and the separate `export.status` are independent. Copy failure
+preserves generation; CLI stdout includes the partial result and exits nonzero.
+Keep the returned operation `id` and `export.receipt_id`; supply the operation ID as
+`request_id` for exact retry. Without it another invocation is new work.
+Same input/destination recovers the original receipt even if its caller copy was
+subsequently deleted or changed: this is historical success, not current integrity.
+Relative paths and parent symlinks are anchored once; a changed destination conflicts.
+Omitting `export_to` on an export-bound retry retains the original delivery intent;
+it does not cancel it. An old no-export request remains a no-export request.
+A crash before copying can resume that deterministic step only. Uncertain copying
+reports `MUTATION_INCOMPLETE`, never automatic replay. Inspect the receipt, then use:
+
+```sh
+unfold export-file PRIMARY_ARTIFACT_ID '/existing/other-disk/Result.mp4' \
+  --request-id fedcba9876543210fedcba9876543210
+```
+
+`export_file(artifact_id, destination, request_id=None)` needs no grant, credentials
+or renderer. It verifies retained bytes and owned sibling staging, then publishes
+atomically without replacement using POSIX descriptor-relative hard links. Existing
+entries (including identical files/symlinks) conflict; there is no force/auto-numbering.
+Windows exact-file export is explicitly unsupported; no weaker fallback is automatic.
+Filesystem hard-link/fsync errors are reported. Normal failures remove only owned
+staging; crash leftovers are named in the retained intent's `staging_path`. Inspect
+before deliberate cleanup. This does not confine an unrestricted malicious same-user
+process moving held directories. Cancellation cannot undo committed media or published
+copies; interruptions report incomplete delivery. Legacy `export ARTIFACT DIRECTORY`
+keeps its directory creation, download names and direct-copy interruption limitations.
+
+Async `submit_creation` does not accept a destination or auto-export; queued/running
+jobs promise no output readiness. MCP App downloads remain opaque bytes saved by the
+host, not server-local `export_to` destinations.
 
 ### Interrupted direct creation and revision
 

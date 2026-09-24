@@ -23,3 +23,17 @@ jobs:
           node-version: '22'
       - run: python -m pip install ".[mcp]" pytest
       - run: python -m pytest -q tests/test_processes.py tests/test_file_portability.py tests/test_mcp_staging.py tests/test_backend_portability.py tests/test_fonts.py
+      - name: Install FFmpeg for retained-media export checks (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg for retained-media export checks (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Require retained-media test prerequisite on POSIX
+        if: runner.os != 'Windows'
+        run: ffmpeg -version
+      # POSIX hosts exercise actual publication and process-loss recovery. Windows
+      # exercises native UNSUPPORTED refusal; metadata, help and legacy directory
+      # export must still run there. Do not skip this whole step on Windows.
+      - name: Export and help portability
+        run: python -m pytest -q -rs tests/test_exports.py tests/test_help.py

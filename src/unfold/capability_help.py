@@ -1,7 +1,31 @@
 """Capability skill content; rendered by library help, never by intelligence."""
 
 # Purpose, example arguments, result, and operation-specific recovery/constraints.
+EXPORT_GUIDANCE = (
+    "Exact filename, matching extension and existing parent required. Spaces/Unicode are preserved; "
+    "unsafe/device names are rejected. POSIX descriptor-relative hard-link publication only; "
+    "Windows exact-file export is explicitly unsupported. Atomic no-replace publication follows "
+    "verified staging; filesystem hard-link/fsync failures are reported, never weakened. "
+    "No render, provider, overwrite or auto-numbering. Save request_id (allocated if omitted): "
+    "same spelling/input recovers the retained result before preflight, without checking or repairing "
+    "today's caller copy. Relative paths/parent symlinks are anchored once. Changed input conflicts. "
+    "status is completed, failed or incomplete, independently of generation. CLI prints partial "
+    "JSON and exits nonzero on failed/incomplete delivery. Inspect mutation-status for uncertain "
+    "publication (MUTATION_INCOMPLETE); deliberately export the same artifact to a new destination/ID. "
+    "Owned .unfold-RECEIPT.tmp crash leftovers are identified by the intent's staging_path, not "
+    "automatically removed. Cancellation does not undo published bytes. No confinement against an "
+    "unrestricted same-user process moving held directories. Legacy export DIRECTORY remains "
+    "unchanged and copies directly to the final filename with weaker interruption guarantees."
+)
+
 CAPABILITY_HELP = {
+    "export-file": (
+        "Copy retained media to an exact caller-owned filename",
+        {"artifact_id": "ARTIFACT", "destination": "/existing/exports/The convergence loop.mp4",
+         "request_id": "0123456789abcdef0123456789abcdef"},
+        "Separate delivery status, receipt ID, artifact/revision IDs; path and SHA-256 on success.",
+        EXPORT_GUIDANCE,
+    ),
     "submit-creation": (
         "Accept one owned asynchronous creation",
         {
@@ -16,7 +40,7 @@ CAPABILITY_HELP = {
             },
             "request_id": "0123456789abcdef0123456789abcdef",
         },
-        "Retained job ID and status; poll review-state for the result.",
+        "Retained job ID and status; poll review-state for the result. Completed job.result carries primary_artifact_id and outputs. Queued/running is not output readiness; async creation never auto-exports.",
         "Requires a prepared renderer, smart dependencies and explicit bounded disclosure authority. Duration supports 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up. Exact retries never relaunch; changing input under the same request_id fails. Closing a view does not cancel work. Use cancel-job and inspect its terminal state.",
     ),
     "cancel-job": (
@@ -343,6 +367,12 @@ COMMAND_HELP = {
         "Exported path and integrity information.",
         "Requires intact output and refuses overwrite. Choose another destination/name if occupied. This is a media copy; use call export-pack or export-handoff for ZIPs.",
     ),
+    "export-file": (
+        "Copy saved media to an exact filename without generation",
+        "unfold export-file ARTIFACT '/existing/exports/The convergence loop.mp4' --request-id 0123456789abcdef0123456789abcdef",
+        "Delivery status, receipt_id, artifact_id, revision_id; path and SHA-256 on success.",
+        EXPORT_GUIDANCE,
+    ),
     "render": (
         "Render retained source again without intelligence",
         "unfold render REVISION",
@@ -376,8 +406,8 @@ COMMAND_HELP = {
     "create": (
         "Animate a new explanation",
         "unfold create --brief brief.json --grant grant.json --request-id 0123456789abcdef0123456789abcdef",
-        "Operation record; completed status includes project_id and revision_id.",
-        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Brief.output is {\"resolution\":\"1080p\"} (native 1920×1080, new-work default) or {\"resolution\":\"720p\"} (1280×720). Settings are retained per revision, not global. Durations support 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up; the default stays 20 seconds. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request.",
+        "Operation record; completed status includes project_id, revision_id, primary_artifact_id and outputs (artifact, revision, role, format, SHA-256, suggested_filename). Optional --export-to FILE / library create(export_to=...) adds a separate export result; failed copying never relabels successful generation.",
+        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Brief.output is {\"resolution\":\"1080p\"} (native 1920×1080, new-work default) or {\"resolution\":\"720p\"} (1280×720). Settings are retained per revision, not global. Durations support 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up; the default stays 20 seconds. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request. Optional --export-to FILE preflights before NEW generation and binds a separate copy receipt. Destination never enters the brief/provider payload. Keep the returned operation id and export.receipt_id. Changed destination conflicts; adding export to an old no-export request requires export-file instead. A pending copy after committed generation can resume deterministically; uncertain copying cannot replay. No export for uncommitted production. " + EXPORT_GUIDANCE,
     ),
     "revise": (
         "Apply a change while retaining the earlier composition",

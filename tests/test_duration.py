@@ -133,7 +133,8 @@ def test_cli_and_installed_schema_accept_fractional_briefs(tmp_path, monkeypatch
     brief.write_text(json.dumps(dict(title="Bumper", intent="Signature", duration=2.52)))
     grant = tmp_path / "grant.json"
     grant.write_text(Grant(provider="openai", model="fixture").model_dump_json())
-    monkeypatch.setattr(Unfold, "create", lambda self, brief, grant, request_id: brief.model_dump())
+    monkeypatch.setattr(Unfold, "create",
+                        lambda self, brief, grant, request_id, export_to=None: brief.model_dump())
     monkeypatch.setattr(sys, "argv", ["unfold", "--library", str(tmp_path / "library"),
                         "create", "--brief", str(brief), "--grant", str(grant)])
     cli.main()

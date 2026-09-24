@@ -174,6 +174,8 @@ def create_server(library, *, allow_models=False):
             "commands",
             "original",
             "destination",
+            "staging_path",
+            "parent_identity",
             "source",
         }
         if isinstance(value, dict):

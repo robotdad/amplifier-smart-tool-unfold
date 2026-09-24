@@ -5,6 +5,7 @@ import time
 
 import psutil
 
+from .exports import output_summary
 from .models import OutputSettings, UnfoldError
 from .processes import owned_process, stop_tree
 from .store import digest, uid
@@ -286,7 +287,8 @@ class Recovery:
         }
         project["current_revision"] = revision_id
         project["revisions"].append(revision_id)
-        operation.update(status="completed", revision_id=revision_id)
+        operation.update(status="completed", revision_id=revision_id,
+                         primary_artifact_id=artifact["id"], outputs=[output_summary(artifact)])
         for kind, record in (
             ("revision", revision),
             ("artifact", artifact),

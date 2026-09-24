@@ -14,6 +14,7 @@ from .assets import Assets
 from .backend import Backend
 from .credentials import CREDENTIALS, credential, worker_environment
 from .delivery import Delivery
+from .exports import Exports, suggested_filename
 from .models import Brief, Grant, UnfoldError, retained_brief, retry_brief_payload
 from .processes import process_identity, stop_worker
 from .recovery import Recovery
@@ -21,7 +22,7 @@ from .review import Review
 from .store import Store, digest, uid, write_json
 
 
-class Unfold(Recovery, Review, Assets, Delivery):
+class Unfold(Recovery, Review, Assets, Delivery, Exports):
     def __init__(self, library=None, backend=None):
         self.store = Store(library or Path.home() / ".local/share/unfold")
         self.backend = Backend(backend or Path.home() / ".local/share/unfold-backend")
@@ -335,6 +336,8 @@ class Unfold(Recovery, Review, Assets, Delivery):
 
     def inspect(self, identity):
         record = self.store.get(identity)
+        if record.get("kind") == "operation":
+            record = self._operation_export(self._operation_outputs(record))
         if record.get("kind") == "artifact":
             return self.artifact(identity)
         if "artifacts" in record:
@@ -363,6 +366,7 @@ class Unfold(Recovery, Review, Assets, Delivery):
         record["download_name"] = (
             re.sub(r"[^\w .-]", "_", record["name"]).strip(". ") + "." + record.get("format", "mp4")
         )
+        record["suggested_filename"] = suggested_filename(record)
         return record
 
     def observe(self, after=0):
@@ -582,8 +586,8 @@ class Unfold(Recovery, Review, Assets, Delivery):
             self.store.event("feedback_addressed", feedback_id, {"revision_id": revision_id}, db)
         return note
 
-    def create(self, brief: Brief, grant: Grant, *, request_id=None):
-        return self._produce(brief, grant, request_id=request_id)
+    def create(self, brief: Brief, grant: Grant, *, request_id=None, export_to=None):
+        return self._create_export(brief, grant, request_id, export_to)
 
     def revise(
         self,

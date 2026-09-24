@@ -2,6 +2,7 @@
 
 # An explicit allowlist, never arbitrary getattr from untrusted UI input.
 CAPABILITIES = {
+    "export-file": "export_file",
     "submit-creation": "submit_creation",
     "cancel-job": "cancel_job",
     "save-review-view": "save_review_view",

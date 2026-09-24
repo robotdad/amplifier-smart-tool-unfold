@@ -66,6 +66,10 @@ def main():
     p = commands.add_parser("export")
     p.add_argument("id")
     p.add_argument("directory")
+    p = commands.add_parser("export-file")
+    p.add_argument("id")
+    p.add_argument("destination")
+    p.add_argument("--request-id")
     p = commands.add_parser("feedback")
     p.add_argument("id")
     p.add_argument("text")
@@ -81,6 +85,7 @@ def main():
         )
         if name == "create":
             p.add_argument("--brief", required=True, help="JSON file matching Brief schema")
+            p.add_argument("--export-to", help="Exact output filename; parent must already exist")
         else:
             p.add_argument("id", help="Base revision ID")
             p.add_argument("--feedback", required=True)
@@ -113,6 +118,7 @@ def main():
                     Brief.model_validate_json(Path(args.brief).read_text()),
                     Grant.model_validate_json(Path(args.grant).read_text()),
                     request_id=args.request_id,
+                    export_to=args.export_to,
                 )
             elif command == "revise":
                 result = library.revise(
@@ -127,6 +133,8 @@ def main():
                 result = library.rename(args.id, args.name)
             elif command == "export":
                 result = library.export(args.id, args.directory)
+            elif command == "export-file":
+                result = library.export_file(args.id, args.destination, args.request_id)
             elif command == "feedback":
                 result = library.feedback(args.id, args.text)
             elif command == "address-feedback":
@@ -136,10 +144,23 @@ def main():
             else:
                 result = getattr(library, command)()
         print(json.dumps(result, indent=2))
+        if isinstance(result, dict):
+            delivery = result.get("export", result if (
+                args.command == "export-file" or
+                args.command == "call" and args.capability == "export-file"
+            ) else {})
+            if delivery and delivery.get("status") != "completed":
+                print(json.dumps({"error": delivery.get("error", {
+                    "code": "EXPORT_INCOMPLETE", "message": "Requested copy did not complete."
+                })}), file=sys.stderr)
+                sys.exit(1)
         if isinstance(result, dict) and result.get("status") in {"failed", "cancelled", "interrupted"}:
             sys.exit(1)
     except KeyboardInterrupt:
-        pass
+        if args.command in {"create", "export-file"} or (
+            args.command == "call" and args.capability == "export-file"
+        ):
+            sys.exit(130)
     except (UnfoldError, ValidationError, OSError, ValueError, TypeError) as exc:
         error = (
             exc.as_dict()
