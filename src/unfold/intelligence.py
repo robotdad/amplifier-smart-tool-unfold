@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .backend import Backend
-from .models import Grant, Scene, UnfoldError
+from .models import Grant, OutputSettings, Scene, UnfoldError
 from .store import Store, digest, uid, write_all
 from .timing import FPS, encoded_frames
 
@@ -18,6 +18,9 @@ class Production:
     def __init__(self, request):
         self.request = request
         self.grant = Grant.model_validate(request["grant"])
+        self.output = OutputSettings.model_validate(
+            request["brief"].get("output", {"resolution": "720p"})
+        )
         self.store = Store(request["library"])
         self.directory = self.store.workspace(request["operation_id"])
         self.backend = Backend(request["backend"])
@@ -58,7 +61,7 @@ class Production:
                         "-frames:v",
                         "1",
                         "-vf",
-                        "scale=1280:720:force_original_aspect_ratio=decrease",
+                        f"scale={self.output.dimensions[0]}:{self.output.dimensions[1]}:force_original_aspect_ratio=decrease",
                         "-y",
                         str(path),
                     ],
@@ -169,6 +172,8 @@ class Production:
                 scene = Scene.model_validate(data)
                 if scene.duration != self.request["brief"]["duration"]:
                     raise ValueError("Preserve the requested duration exactly.")
+                if scene.output != self.output:
+                    raise ValueError("Preserve the requested output settings exactly.")
                 resources = self.request.get("resources", {})
                 for asset in resources.values():
                     if digest(Path(asset["path"])) != asset["sha256"]:

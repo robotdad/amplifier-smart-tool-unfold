@@ -198,6 +198,7 @@ def test_authoring_and_revision_preserve_the_canonical_short_duration(tmp_path, 
 
     brief = Brief(title="Bumper", intent="Short signature", duration=2.52)
     scene = Scene.model_validate(bumper(2.52))
+    scene.output = brief.output
     owner = Production(dict(library=str(tmp_path / "library"), backend=str(tmp_path),
         operation_id=uid(), brief=brief.model_dump(),
         grant=Grant(provider="openai", model="fixture").model_dump()))

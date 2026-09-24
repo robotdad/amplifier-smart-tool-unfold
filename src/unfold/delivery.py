@@ -6,7 +6,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from .backend import run
-from .models import Scene, UnfoldError
+from .models import OutputSettings, Scene, UnfoldError
 from .store import digest, portable_archive, uid
 from .timing import FPS, encoded_frames
 
@@ -65,6 +65,7 @@ class Delivery:
                 ),
             )
         rev = self.store.get(revision_id, "revision")
+        settings = OutputSettings.model_validate(rev["brief"].get("output", {"resolution": "720p"}))
         duration = rev["brief"]["duration"]
         if not math.isfinite(reference_start) or reference_start < 0:
             raise UnfoldError("INVALID_INPUT", "Reference start must be nonnegative seconds.")
@@ -130,7 +131,8 @@ class Delivery:
             "dependencies": dependencies,
             "hashes": hashes,
             "duration": duration,
-            "dimensions": [1280, 720],
+            "dimensions": list(settings.dimensions),
+            "output": settings.model_dump(),
             "fps": 30,
             "time_basis": "composition seconds",
             "placement": "full canvas; reference scaled to fit with letterboxing",
@@ -167,6 +169,10 @@ class Delivery:
         scene = Scene.model_validate_json(
             (Path(rev["source_path"]) / "scene.json").read_text(), context={"retained_source": True}
         )
+        width, height = scene.output.dimensions
+        if d["dimensions"] != [width, height]:
+            raise UnfoldError("INVALID_INPUT", "Delivery dimensions differ from retained source.")
+        background = scene.background.lstrip("#") if scene.background != "transparent" else "101832"
         # The explicit overlay profile removes only the canvas background, never colored elements.
         scene.background = "transparent"
         source = directory / "source"
@@ -185,10 +191,10 @@ class Delivery:
                     "-f",
                     "lavfi",
                     "-i",
-                    f"color=c=0x{Scene.model_validate_json((Path(rev['source_path']) / 'scene.json').read_text()).background.lstrip('#') if json.loads((Path(rev['source_path']) / 'scene.json').read_text())['background'] != 'transparent' else '101832'}:s=1280x720:r=30",
+                    f"color=c=0x{background}:s={width}x{height}:r=30",
                 ]
             filters = [
-                "[1:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[bg]",
+                f"[1:v]scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,setpts=PTS-STARTPTS[bg]",
                 "[bg][0:v]overlay=0:0:shortest=1,format=yuv420p[v]",
             ]
             for index, t in enumerate(d["audio"]):
@@ -224,10 +230,11 @@ class Delivery:
         videos = [s for s in info["streams"] if s["codec_type"] == "video"]
         expected_frames = encoded_frames(d["duration"])
         if (len(videos) != 1 or int(videos[0].get("nb_frames", 0)) != expected_frames or
+                (videos[0]["width"], videos[0]["height"]) != (width, height) or
                 Fraction(videos[0]["avg_frame_rate"]) != FPS or
                 abs(float(videos[0]["duration"]) - expected_frames / FPS) > 0.0001 or
                 abs(info["duration"] - expected_frames / FPS) > 0.1):
-            raise UnfoldError("INVALID_RENDER", "Delivery duration did not match.")
+            raise UnfoldError("INVALID_RENDER", "Delivery dimensions or duration did not match.")
         artifact = self._artifact(
             rev["id"],
             output,
@@ -237,8 +244,9 @@ class Delivery:
                 "frame_count": expected_frames,
                 "streams": info["streams"],
                 "alpha": mode == "overlay",
-                "width": 1280,
-                "height": 720,
+                "width": width,
+                "height": height,
+                "output": scene.output.model_dump(),
                 "fps": "30/1",
             },
             self.store.get(rev["project_id"], "project")["name"],

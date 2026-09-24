@@ -37,7 +37,7 @@ from unfold.store import digest
 import unfold.agent
 Backend.require = lambda self: None
 Backend.source_hash = lambda self, path: digest(path / 'scene.json')
-Backend.probe = lambda self, path: {}
+Backend.probe = lambda self, path: {'width': 1920, 'height': 1080}
 async def execute(owner):
     path = owner.directory
     name, value = credential(owner.grant.provider)
@@ -56,7 +56,7 @@ async def execute(owner):
         await asyncio.sleep(0.02)
     source = path / 'source'
     source.mkdir()
-    (source / 'scene.json').write_text('{}')
+    (source / 'scene.json').write_text(json.dumps({'output': owner.output.model_dump()}))
     (path / 'video.mp4').write_bytes(b'scripted retained media, not a real MP4')
     return {'source_sha256': digest(source / 'scene.json'),
             'render': {'sha256': digest(path / 'video.mp4')},
@@ -97,7 +97,7 @@ def rig(tmp_path, monkeypatch):
     tool = Unfold(tmp_path / "library", tmp_path / "backend")
     monkeypatch.setattr(tool.backend, "require", lambda: None)
     monkeypatch.setattr(tool.backend, "source_hash", lambda path: digest(path / "scene.json"))
-    monkeypatch.setattr(tool.backend, "probe", lambda path: {})
+    monkeypatch.setattr(tool.backend, "probe", lambda path: {"width": 1920, "height": 1080})
     fixture = tmp_path / "injection"
     fixture.mkdir()
     (fixture / "sitecustomize.py").write_text(SCRIPTED)

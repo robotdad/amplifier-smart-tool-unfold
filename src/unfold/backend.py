@@ -321,16 +321,17 @@ class Backend:
                         f'tl.set("#{tween.target} .head",{{opacity:{1 if tween.draw == 1 else 0}}},{tween.at + tween.duration if tween.draw == 1 else tween.at});'
                     )
         body = "".join(elements)
+        width, height = scene.output.dimensions
         if scene.camera:
             body = (
-                '<div id="world" style="position:absolute;width:1280px;height:720px;transform-origin:0 0">'
+                f'<div id="world" style="position:absolute;width:{width}px;height:{height}px;transform-origin:0 0">'
                 + body
                 + "</div>"
             )
             for move in scene.camera:
                 props = {
-                    "x": 640 - move.center_x * move.zoom,
-                    "y": 360 - move.center_y * move.zoom,
+                    "x": width // 2 - move.center_x * move.zoom,
+                    "y": height // 2 - move.center_y * move.zoom,
                     "scale": move.zoom,
                     "duration": move.duration,
                     "ease": move.ease,
@@ -354,7 +355,7 @@ body{{font-family:system-ui,sans-serif}}#root{{position:relative;width:100%;heig
 .element{{position:absolute;line-height:1.22;transform-origin:center center;font-weight:550}}
 .label{{font-size:14px;line-height:1.2;letter-spacing:1.5px;margin-bottom:10px;font-weight:600}}
 .line,.dot{{pointer-events:none}}{font_css}
-</style></head><body><div id="root" data-composition-id="unfold" data-start="0" data-width="1280" data-height="720" data-duration="{scene.duration}">
+</style></head><body><div id="root" data-composition-id="unfold" data-start="0" data-width="{width}" data-height="{height}" data-duration="{scene.duration}">
 {body}</div><script>
 {font_gate}window.__timelines=window.__timelines||{{}};const tl=gsap.timeline({{paused:true}});
 {"".join(lines)}
@@ -452,8 +453,7 @@ window.__timelines.unfold=tl;{font_gate_end}
         )
         meta = self.probe(output, alpha=alpha)
         if (
-            meta["width"] != 1280
-            or meta["height"] != 720
+            (meta["width"], meta["height"]) != scene.output.dimensions
             or meta["frame_count"] != encoded_frames(scene.duration)
             or abs(meta["encoded_duration"] - meta["duration"]) > 0.0001
             or Fraction(meta["fps"]) != FPS
@@ -468,6 +468,7 @@ window.__timelines.unfold=tl;{font_gate_end}
             "method": "ffprobe of encoded video stream",
             "audio": "silent",
             "alpha": alpha,
+            "output": scene.output.model_dump(),
         }
 
     def probe(self, path, alpha=False):

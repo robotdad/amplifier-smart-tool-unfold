@@ -37,6 +37,32 @@ Duration = Annotated[
 ]
 
 
+class OutputSettings(Strict):
+    """Native canvas pixels; not an encoder upscale or a global preference."""
+
+    resolution: Literal["720p", "1080p"] = "1080p"
+
+    @property
+    def dimensions(self):
+        return (1920, 1080) if self.resolution == "1080p" else (1280, 720)
+
+
+def retained_brief(data):
+    """Missing settings on saved work mean the original 720p profile."""
+    return Brief.model_validate({"output": {"resolution": "720p"}, **data})
+
+
+def retry_brief_payload(brief, previous, *, derived=False, canonical=False):
+    """Keep legacy hashes exact, without treating explicit new settings as old input."""
+    payload = Brief.model_validate(brief.model_dump()).model_dump() if canonical else brief.model_dump()
+    if "output" not in previous and (
+        "output" not in brief.model_fields_set
+        or (derived and brief.output.resolution == "720p")
+    ):
+        payload.pop("output")
+    return payload
+
+
 class Brief(Strict):
     title: str = Field(min_length=1, max_length=120)
     intent: str = Field(min_length=1, max_length=12000)
@@ -47,6 +73,7 @@ class Brief(Strict):
     reference_start: float = Field(default=0, ge=0)
     cues: list[str] = Field(default_factory=list, max_length=40)
     duration: Duration = 20
+    output: OutputSettings = Field(default_factory=OutputSettings)
 
 
 class Grant(Strict):
@@ -81,10 +108,10 @@ class Element(Strict):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
     kind: Literal["card", "text", "line", "dot", "path", "circle", "arc", "image"]
     asset_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
-    x: float = Field(ge=0, le=1280)
-    y: float = Field(ge=0, le=720)
-    width: float = Field(gt=0, le=1280)
-    height: float = Field(gt=0, le=720)
+    x: float = Field(ge=0, le=1920)
+    y: float = Field(ge=0, le=1080)
+    width: float = Field(gt=0, le=1920)
+    height: float = Field(gt=0, le=1080)
     text: str = Field(default="", max_length=250)
     label: str = Field(default="", max_length=60)
     fill: str = Field(default="#142334", pattern=r"^#[0-9a-fA-F]{6}$")
@@ -115,8 +142,6 @@ class Element(Strict):
             raise ValueError("Custom fonts apply to text and card elements.")
         if self.glow_tip and self.kind != "arc":
             raise ValueError("A synchronized glowing tip currently requires an arc.")
-        if self.x + self.width > 1280 or self.y + self.height > 720:
-            raise ValueError("Element must fit the 1280 × 720 canvas.")
         if self.orbit:
             if self.kind != "path" or not self.closed or self.points or self.arrow_end:
                 raise ValueError("Orbit requires a closed path without points or arrowheads.")
@@ -144,8 +169,8 @@ class Tween(Strict):
     at: float = Field(ge=0, le=60)
     duration: float = Field(default=0.5, ge=0, le=10)
     opacity: float | None = Field(default=None, ge=0, le=1)
-    x: float | None = Field(default=None, ge=-1280, le=1280)
-    y: float | None = Field(default=None, ge=-720, le=720)
+    x: float | None = Field(default=None, ge=-1920, le=1920)
+    y: float | None = Field(default=None, ge=-1080, le=1080)
     scale: float | None = Field(default=None, ge=0.1, le=3)
     rotation: float | None = Field(default=None, ge=-720, le=720)
     draw: float | None = Field(default=None, ge=0, le=1)
@@ -158,8 +183,8 @@ class CameraMove(Strict):
 
     at: float = Field(ge=0, le=60)
     duration: float = Field(default=1, ge=0, le=10)
-    center_x: float = Field(ge=0, le=1280)
-    center_y: float = Field(ge=0, le=720)
+    center_x: float = Field(ge=0, le=1920)
+    center_y: float = Field(ge=0, le=1080)
     zoom: float = Field(ge=0.25, le=8)
     ease: Literal["none", "power2.inOut", "power2.out"] = "power2.inOut"
 
@@ -169,6 +194,8 @@ class Scene(Strict):
 
     title: str = Field(min_length=1, max_length=120)
     duration: Duration
+    # Legacy scene documents have no output field. Never reinterpret their pixels.
+    output: OutputSettings = Field(default_factory=lambda: OutputSettings(resolution="720p"))
     background: str = Field(default="#08131f", pattern=r"^(#[0-9a-fA-F]{6}|transparent)$")
     elements: list[Element] = Field(min_length=1, max_length=70)
     tweens: list[Tween] = Field(min_length=1, max_length=200)
@@ -178,6 +205,13 @@ class Scene(Strict):
 
     @model_validator(mode="after")
     def references(self):
+        width, height = self.output.dimensions
+        if any(e.x + e.width > width or e.y + e.height > height for e in self.elements):
+            raise ValueError(f"Element must fit the {width} × {height} canvas.")
+        if any(abs(t.x or 0) > width or abs(t.y or 0) > height for t in self.tweens):
+            raise ValueError("Tween offsets must fit the canvas dimensions.")
+        if any(m.center_x > width or m.center_y > height for m in self.camera):
+            raise ValueError("Camera center must fit the canvas dimensions.")
         if any(e.glow_tip for e in self.elements) and self.stroke_animation != "svg":
             raise ValueError("Glowing tips require SVG stroke animation.")
         ids = {element.id for element in self.elements}

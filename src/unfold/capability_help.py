@@ -5,7 +5,8 @@ CAPABILITY_HELP = {
     "submit-creation": (
         "Accept one owned asynchronous creation",
         {
-            "brief": {"title": "A handoff", "intent": "Explain the caller and library"},
+            "brief": {"title": "A handoff", "intent": "Explain the caller and library",
+                      "output": {"resolution": "1080p"}},
             "grant": {
                 "provider": "openai",
                 "model": "YOUR_VISION_MODEL",
@@ -346,7 +347,7 @@ COMMAND_HELP = {
         "Render retained source again without intelligence",
         "unfold render REVISION",
         "New saved artifact.",
-        "Requires intact source and pinned renderer/FFmpeg dependencies. Fails rather than silently repairing changed source; no provider is required.",
+        "Requires intact source and pinned renderer/FFmpeg dependencies. Preserves native 1080p or 720p source dimensions; missing settings in legacy source mean 720p. No upscale or automatic repair; no provider is required.",
     ),
     "feedback": (
         "Retain a targeted comment without spending",
@@ -376,7 +377,7 @@ COMMAND_HELP = {
         "Animate a new explanation",
         "unfold create --brief brief.json --grant grant.json --request-id 0123456789abcdef0123456789abcdef",
         "Operation record; completed status includes project_id and revision_id.",
-        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Durations support 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up; the default stays 20 seconds. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request.",
+        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Brief.output is {\"resolution\":\"1080p\"} (native 1920×1080, new-work default) or {\"resolution\":\"720p\"} (1280×720). Settings are retained per revision, not global. Durations support 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up; the default stays 20 seconds. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request.",
     ),
     "revise": (
         "Apply a change while retaining the earlier composition",

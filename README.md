@@ -102,7 +102,10 @@ through Unfold. The captions describe the workflow with your agent: describe
 the idea, review the result, and refine it together.
 
 Unfold makes compositions from one frame (1/30 second) through 60 seconds at
-1280×720 and 30 fps, including 2- and 2.5-second identity bumpers. Durations round
+native 1920×1080 (new-work default) or 1280×720 and 30 fps, including 2- and
+2.5-second identity bumpers. Set `output: {"resolution":"720p"}` in the brief
+to choose 720p. Existing saved work and deterministic re-renders keep their
+original resolution; export does not upscale old compositions. Durations round
 to the nearest complete frame, with half-frame ties rounding up. It supports
 animated geometry, text, images, stroke drawing and camera movement. This is an
 early implementation, not a full video timeline editor. Creative quality depends

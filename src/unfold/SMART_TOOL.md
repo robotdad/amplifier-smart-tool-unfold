@@ -30,7 +30,16 @@ requires:
 # Unfold
 
 The Python library is the product. The CLI and optional loopback dashboard adapt
-the same operations. Compositions are 1280×720 at 30 fps, lasting one frame (1/30 second) through 60 seconds.
+the same operations. Compositions are native 1920×1080 (default for new creations)
+or 1280×720 at 30 fps, lasting one frame (1/30 second) through 60 seconds.
+Set `Brief.output={"resolution":"1080p"}` or `{"resolution":"720p"}` in Python
+or the same `output` object in CLI/MCP brief JSON. These are native authoring and
+render dimensions, not an upscale. Settings are retained per brief and scene;
+revisions, re-renders, overlays and delivery preserve them. Saved records without
+the field remain 720p and are not migrated. Retrying an old acknowledged request
+with its original omitted setting returns that request, not a new 1080p creation.
+An explicit changed setting requires a new request ID. There is no resize-on-export
+or automatic conversion of existing source; create new work for a different canvas.
 The authoring profile supports text, cards, paths, polygons, circles, arcs, image
 assets, stroke drawing, equal-point-count path morphing and camera motion. An embedded Amplifier Agent creates and
 refines compositions; deterministic operations manage assets, packs and delivery.
@@ -421,7 +430,7 @@ frames = tool.sample_output(video["id"], [1, 3, 5])
 
 `configure_delivery` pins hashes and a revision. Times use composition seconds;
 `reference_start + composition_time` maps to the recording. Footage scales to fit
-1280×720 with letterboxing. Source trimming and audio placement are explicit; no
+the retained canvas (1920×1080 or 1280×720) with letterboxing. Source trimming and audio placement are explicit; no
 motion tracking, cropping or region transforms are currently exposed. Up to eight
 imported audio tracks can be trimmed, placed and mixed with gain 0–2. Video audio
 is 48 kHz stereo AAC with limiting; reference recording audio is excluded. This

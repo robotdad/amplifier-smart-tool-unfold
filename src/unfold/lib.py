@@ -14,7 +14,7 @@ from .assets import Assets
 from .backend import Backend
 from .credentials import CREDENTIALS, credential, worker_environment
 from .delivery import Delivery
-from .models import Brief, Grant, UnfoldError
+from .models import Brief, Grant, UnfoldError, retained_brief, retry_brief_payload
 from .processes import process_identity, stop_worker
 from .recovery import Recovery
 from .review import Review
@@ -603,11 +603,11 @@ class Unfold(Recovery, Review, Assets, Delivery):
         if not isinstance(feedback, str) or not 1 <= len(feedback) <= 5000:
             raise UnfoldError("INVALID_INPUT", "Use feedback of 1–5000 characters.")
         return self._produce(
-            Brief.model_validate(revision["brief"]).model_copy(
+            retained_brief(revision["brief"]).model_copy(
                 update={"identity_version": identity_version}
             )
             if identity_version
-            else Brief.model_validate(revision["brief"]),
+            else retained_brief(revision["brief"]),
             grant,
             base=revision,
             feedback=feedback,
@@ -619,7 +619,7 @@ class Unfold(Recovery, Review, Assets, Delivery):
         revision = self.inspect(revision_id)
         if revision["source_integrity"] != "intact":
             raise UnfoldError("MATERIAL_CHANGED", "Valid retained source is required.")
-        brief = Brief.model_validate(revision["brief"]).model_copy(
+        brief = retained_brief(revision["brief"]).model_copy(
             update={"identity_version": version_id}
         )
         return self._produce(
@@ -676,7 +676,8 @@ class Unfold(Recovery, Review, Assets, Delivery):
     def _produce(self, brief, grant, base=None, feedback="", request_id=None, target=None):
         # Canonicalize default numeric values as well as JSON-provided values:
         # Python Brief() and its CLI JSON round-trip must be the same request.
-        brief = Brief.model_validate(Brief.model_validate(brief).model_dump())
+        supplied_brief = Brief.model_validate(brief)
+        brief = Brief.model_validate(supplied_brief.model_dump())
         grant = Grant.model_validate(grant)
         input_payload = {
             "brief": brief.model_dump(), "grant": grant.model_dump(),
@@ -693,6 +694,12 @@ class Unfold(Recovery, Review, Assets, Delivery):
             else:
                 if previous.get("kind") != "operation":
                     raise UnfoldError("REQUEST_CONFLICT", "Request identity belongs to other work.")
+                input_payload["brief"] = retry_brief_payload(
+                    supplied_brief, previous["brief"], derived=base is not None, canonical=True
+                )
+                input_hash = hashlib.sha256(
+                    json.dumps(input_payload, sort_keys=True).encode()
+                ).hexdigest()
                 if "input_sha256" in previous:
                     if previous["input_sha256"] != input_hash:
                         raise UnfoldError(

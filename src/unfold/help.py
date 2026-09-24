@@ -21,6 +21,13 @@ def manifest():
         "smart_tool_format": 1,
         "description": "Create, review, reuse and deliver motion graphics with embedded Amplifier Agent.",
         "library": "unfold.Unfold",
+        "output_settings": {
+            "resolutions": {"720p": [1280, 720], "1080p": [1920, 1080]},
+            "new_creation_default": "1080p",
+            "legacy_missing_setting": "720p",
+            "fps": 30,
+            "scope": "retained per brief and scene; native rendering, no export upscale",
+        },
         "capabilities": {
             "create": "model-backed",
             "revise": "model-backed",

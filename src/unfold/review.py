@@ -10,7 +10,7 @@ import time
 
 import psutil
 
-from .models import Brief, Grant, UnfoldError
+from .models import Brief, Grant, UnfoldError, retained_brief, retry_brief_payload
 from .processes import is_alive, owned_process, process_identity
 from .store import uid
 
@@ -29,10 +29,15 @@ class Review:
             except UnfoldError:
                 old = None
             if old:
+                retry_payload = {**payload, "brief": retry_brief_payload(brief, old.get("brief", {}))}
+                retry_fingerprint = hashlib.sha256(
+                    json.dumps(retry_payload, sort_keys=True).encode()
+                ).hexdigest()
                 if (
                     old.get("kind") != "review_job"
                     or old.get("mode") != "create"
-                    or old.get("fingerprint") != fingerprint
+                    or (old.get("fingerprint") != retry_fingerprint
+                        and {key: old.get(key) for key in retry_payload} != retry_payload)
                 ):
                     raise UnfoldError(
                         "REQUEST_CONFLICT", "Retry identity has different creation input."
@@ -512,7 +517,7 @@ class Review:
         try:
             if job.get("mode") == "create":
                 result = self.create(
-                    Brief.model_validate(job["brief"]),
+                    retained_brief(job["brief"]),
                     Grant.model_validate(job["grant"]),
                     request_id=job["operation_id"],
                 )

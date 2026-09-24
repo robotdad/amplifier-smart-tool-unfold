@@ -5,7 +5,7 @@ import time
 
 import psutil
 
-from .models import UnfoldError
+from .models import OutputSettings, UnfoldError
 from .processes import owned_process, stop_tree
 from .store import digest, uid
 
@@ -250,7 +250,19 @@ class Recovery:
             or digest(video) != result["render"]["sha256"]
         ):
             raise UnfoldError("STALE_RESULT", "Source or video changed after agent inspection.")
-        self.backend.probe(video)
+        measured = self.backend.probe(video)
+        output = OutputSettings.model_validate(
+            operation["brief"].get("output", {"resolution": "720p"})
+        )
+        scene_output = OutputSettings.model_validate(
+            json.loads((source / "scene.json").read_text()).get("output", {"resolution": "720p"})
+        )
+        if (scene_output != output
+                or (measured["width"], measured["height"]) != output.dimensions):
+            raise UnfoldError("INVALID_RENDER", "Result dimensions differ from requested native output.")
+        # Retain measured dimensions, never an unverified worker metadata claim.
+        result["render"].update(width=measured["width"], height=measured["height"],
+                                output=output.model_dump())
         project = self.store.get(operation["project_id"], "project", db)
         if project["current_revision"] != operation["base"]:
             raise UnfoldError(
