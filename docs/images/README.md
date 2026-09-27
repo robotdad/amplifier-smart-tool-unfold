@@ -78,3 +78,21 @@ two-worker render. The 960px GIF is derived from it with an FFmpeg palette pass 
 comparison report remain in ignored working storage.
 
 The cut was visually approved by the owner on 2026-09-27 before publication.
+
+## scene3d video screens demo
+
+`scene3d-video-screens-demo.mp4`, `scene3d-video-screens-demo.gif` and
+`scene3d-video-screens-demo-poster.png` are a 16-second explanation of scene3d video screens, made
+with the feature itself. The composition is a hand-authored `Scene` whose screen plays the approved
+`scene3d-pr-demo.mp4` (seconds 6 to 12.6) as a library video asset. It was validated by
+`unfold.models`, compiled by `Backend.author` (which decoded the clip into frame atlases at 15 fps,
+512 px wide) and rendered by `Backend.render` from the feature branch at native 1920×1080 and 30fps
+with two render workers on software WebGL. No model authored or reviewed it.
+
+The same source was rendered a second time with one worker; FFmpeg `framemd5` found 480 of 480
+decoded frames identical. The MP4 is the unmodified two-worker render. The 960px GIF is derived from
+it with an FFmpeg palette pass (12fps, 96 colours, ordered dither); the poster is frame 345, with the
+demo playing on the screen. The scene script, both renders and the comparison report remain in
+ignored working storage.
+
+Added to the pull request at the owner's request on 2026-09-27.
