@@ -198,5 +198,12 @@ cost render time, so budget them like any other resource.
 them. Use `moments` sparingly, for a handful of emphasis beats (a shockwave on arrival, a
 flash on failure) — not on every event, or they stop reading as emphasis.
 
+`screens` play a library video on a panel inside the 3D scene (picture-in-picture, or a
+retained render shown inside a larger explanation). Each needs a video `asset_id` from the
+selected identity; the backend decodes it into frame atlases (15 fps, 512 px wide) when it
+writes the source, so playback follows scene time exactly and is identical on every render
+worker. Use a screen only when the clip itself is the subject, keep at most two visible, and
+target the screen with a camera shot when its content must be read.
+
 scene3d renders are meaningfully slower than 2D-only scenes (software GL, roughly
 1.5 s/frame); budget fewer render/repair cycles when scene3d is present.

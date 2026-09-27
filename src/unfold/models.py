@@ -292,6 +292,26 @@ class Moment3D(Strict):
     strength: float = Field(default=1.0, ge=0.1, le=2)
 
 
+class Screen3D(Strict):
+    """A panel that plays a library video. Code decodes the clip into frame atlases at author
+    time; the runtime shows the frame for scene time t, so playback is seek-exact."""
+
+    id: str = Field(pattern=ELEMENT_ID_PATTERN)
+    asset_id: str = Field(pattern=r"^[a-f0-9]{32}$")  # a video asset from the selected identity
+    position: NodePosition
+    width: float = Field(default=4.0, ge=1, le=12)  # world units; height follows the clip aspect
+    yaw: float = Field(default=0, ge=-180, le=180)  # degrees about the vertical axis
+    tilt: float = Field(default=0, ge=-45, le=45)  # degrees back (+) or forward (-)
+    appear_at: float = Field(default=0, ge=0, le=60)
+    play_from: float | None = Field(default=None, ge=0, le=60)  # scene time playback starts; None = appear_at
+    media_start: float = Field(default=0, ge=0, le=600)  # seconds into the clip
+    rate: float = Field(default=1.0, ge=0.25, le=4)
+    loop: bool = False  # False holds the last frame
+    frame: Literal["bezel", "floating", "none"] = "bezel"
+    role: Role3D = "neutral"
+    label: str | None = Field(default=None, max_length=40)
+
+
 class Scene3D(Strict):
     environment: Literal[
         "studio_dark", "deep_space", "dusk", "lab_white", "neon_grid"
@@ -304,15 +324,18 @@ class Scene3D(Strict):
     effects: list[Effect3D] = Field(default_factory=list, max_length=12)
     camera: list[Shot3D] = Field(..., min_length=1, max_length=20)
     moments: list[Moment3D] = Field(default_factory=list, max_length=16)
+    screens: list[Screen3D] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def references(self):
         node_ids = {n.id for n in self.nodes}
         link_ids = {link.id for link in self.links}
         effect_ids = {e.id for e in self.effects}
-        all_ids = node_ids | link_ids | effect_ids
-        if len(all_ids) != len(self.nodes) + len(self.links) + len(self.effects):
-            raise ValueError("scene3d IDs must be unique across nodes, links and effects.")
+        screen_ids = {s.id for s in self.screens}
+        all_ids = node_ids | link_ids | effect_ids | screen_ids
+        if len(all_ids) != len(self.nodes) + len(self.links) + len(self.effects) + len(self.screens):
+            raise ValueError("scene3d IDs must be unique across nodes, links, effects and screens.")
+        targetable = node_ids | screen_ids
         if all_ids & {"root", "world", "scene3d"}:
             raise ValueError("The IDs root, world and scene3d are reserved by the backend.")
         for link in self.links:
@@ -324,11 +347,11 @@ class Scene3D(Strict):
             ):
                 raise ValueError("Effect must reference existing nodes.")
         for shot in self.camera:
-            if shot.target is not None and shot.target not in node_ids:
-                raise ValueError("Camera shot target must reference an existing node.")
+            if shot.target is not None and shot.target not in targetable:
+                raise ValueError("Camera shot target must reference an existing node or screen.")
         for moment in self.moments:
-            if moment.node is not None and moment.node not in node_ids:
-                raise ValueError("Moment must reference an existing node.")
+            if moment.node is not None and moment.node not in targetable:
+                raise ValueError("Moment must reference an existing node or screen.")
         if sum(e.count for e in self.effects) > 8000:
             raise ValueError("Total scene3d particle count must not exceed 8000.")
         if self.camera[0].at != 0:
@@ -381,6 +404,7 @@ class Scene(Strict):
                 {n.id for n in self.scene3d.nodes}
                 | {link.id for link in self.scene3d.links}
                 | {e.id for e in self.scene3d.effects}
+                | {screen.id for screen in self.scene3d.screens}
             )
             if scene3d_ids & ids:
                 raise ValueError("scene3d IDs must not collide with 2D element IDs.")
@@ -400,6 +424,11 @@ class Scene(Strict):
                 for moment in self.scene3d.moments
             ):
                 raise ValueError("scene3d moment timing must fit the scene duration.")
+            if any(
+                max(screen.appear_at, screen.play_from or 0) > self.duration + 1e-9
+                for screen in self.scene3d.screens
+            ):
+                raise ValueError("scene3d screen timing must fit the scene duration.")
         last_frame = (encoded_frames(self.duration) - 1) / FPS
         points_tweens_by_target = {}
         for tween in self.tweens:

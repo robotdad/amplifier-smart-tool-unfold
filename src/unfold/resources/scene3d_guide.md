@@ -99,6 +99,24 @@ Contrast focus against context: neon/holo on the subject, matte/ceramic elsewher
   - Over busy areas, put the text in a `card` with a dark fill.
   - Keep text away from dense particle regions and the bloom around neon nodes.
 
+## 5a. Video screens
+
+A `screens` entry plays a library video on a panel inside the 3D scene: picture-in-picture,
+a retained Unfold render shown inside a larger explanation, or a clip framed as evidence.
+
+- Use one when the clip itself is the point (show the output, then explain it). A screen is
+  not decoration; if nothing in the narration refers to what is playing, cut it.
+- The video must be an `asset_id` from the selected identity. Never invent or describe a clip
+  you were not given.
+- Size for legibility: at the default camera distance a `width` of 4 to 6 reads as a monitor;
+  frame the screen with a camera shot that targets its id when the audience must read it.
+- Keep at most two screens visible at once; each one is a large, bright rectangle that competes
+  with every node.
+- `play_from` controls when playback starts (default: when the screen appears); `rate` speeds
+  it up or slows it down; `loop: false` holds the last frame.
+- The clip is decoded at 15 frames per second and 512 px wide. Fine text inside the clip will
+  not survive; show it large or not at all.
+
 ## 6. Post and moments
 
 | Post | Look | Use |

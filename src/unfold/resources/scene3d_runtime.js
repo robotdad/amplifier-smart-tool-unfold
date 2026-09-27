@@ -146,6 +146,52 @@
     });
     const centroid = nodes.reduce((a, r) => a.addInPlace(r.base), V.Zero()).scaleInPlace(1 / nodes.length);
 
+    // --- video screens: frame atlases decoded at author time; the tile shown is a pure function of t.
+    // No <video>, no VideoTexture: those play on a wall clock and would differ between render workers.
+    const SCREENS = DATA.screens || {};
+    const screens = (S.screens || []).map((sc) => {
+      const m = SCREENS[sc.id];
+      if (!m || !m.pages || !m.pages.length) throw new Error("scene3d screen has no decoded frames: " + sc.id);
+      const col = ROLE[sc.role] || ROLE.neutral;
+      const w = sc.width, h = sc.width * m.aspect;
+      const base = new V(sc.position[0], sc.position[1], sc.position[2]);
+      const pivot = new B.TransformNode("sp_" + sc.id, scene);
+      pivot.position.copyFrom(base);
+      pivot.rotation.set(sc.tilt * Math.PI / 180, sc.yaw * Math.PI / 180, 0);
+      const pic = B.MeshBuilder.CreatePlane("sv_" + sc.id, { width: w, height: h }, scene);
+      pic.parent = pivot;
+      const pm = new B.StandardMaterial("svm_" + sc.id, scene);
+      pm.disableLighting = true; pm.fogEnabled = false;
+      pm.diffuseColor = new C3(0, 0, 0); pm.specularColor = new C3(0, 0, 0);
+      // Atlas pages load through <img> (allowed by img-src 'self'); the page forbids fetch/XHR
+      // (connect-src 'none'), so they are handed to Babylon as decoded images, never as URLs.
+      const images = m.pages.map((pg) => {
+        const img = new Image();
+        const loaded = new Promise((res, rej) => {
+          img.onload = () => res(img);
+          img.onerror = () => rej(new Error("scene3d screen frames failed to load: " + pg.file));
+        });
+        img.src = pg.file;
+        return loaded;
+      });
+      pic.material = pm;
+      let frame = null;
+      if (sc.frame === "bezel") {
+        frame = B.MeshBuilder.CreateBox("sb_" + sc.id, { width: w + 0.18, height: h + 0.18, depth: 0.1 }, scene);
+        frame.material = makeMaterial(B, scene, "obsidian", col, "sbm_" + sc.id);
+        shadow.addShadowCaster(frame);
+      } else if (sc.frame === "floating") {
+        frame = B.MeshBuilder.CreatePlane("sb_" + sc.id, { width: w + 0.1, height: h + 0.1 }, scene);
+        const fm = new B.StandardMaterial("sbm_" + sc.id, scene); fm.disableLighting = true;
+        fm.emissiveColor = new C3(col[0] * 0.9, col[1] * 0.9, col[2] * 0.9); frame.material = fm;
+      }
+      if (frame) { frame.parent = pivot; frame.position.z = 0.06; }   // behind the picture (planes face -Z)
+      const rec = { n: { id: sc.id, label: sc.label, appear_at: sc.appear_at, size: h * 0.6 },
+        sc, m, mesh: pivot, pic, pm, images, pages: null, base, col, playFrom: m.play_from };
+      byId.set(sc.id, rec);
+      return rec;
+    });
+
     // --- floor with a procedural grid; fog fades it to the horizon
     let floorY = Math.min(...nodes.map((r) => r.base.y - (r.n.shape === "platform" ? 0.1 : r.n.size * 0.75))) - 0.35;
     if (S.floor && env.floor && !TRANSPARENT) {
@@ -197,6 +243,7 @@
     for (const fx of effects) for (const m of fx.meshes) glow.addExcludedMesh(m);
     // neon nodes already emit; the glow blur on top washes their face to white. Bloom supplies the halo.
     for (const r of nodes) if (r.n.material === "neon") glow.addExcludedMesh(r.mesh);
+    for (const r of screens) glow.addExcludedMesh(r.pic);   // the picture shows true colour
     const pipe = new B.DefaultRenderingPipeline("pipe", true, scene, [camera]);
     pipe.samples = 4; pipe.fxaaEnabled = true;
     pipe.bloomEnabled = true; [pipe.bloomThreshold, pipe.bloomWeight, pipe.bloomKernel] = post.bloom; pipe.bloomScale = 0.5;
@@ -218,7 +265,7 @@
     // --- DOM labels projected from 3D (text via textContent only)
     const root = document.getElementById("root") || document.body;
     const inkLight = env.ink === "light";
-    const labels = nodes.filter((r) => r.n.label).map((r) => {
+    const labels = [...nodes, ...screens].filter((r) => r.n.label).map((r) => {
       const el = document.createElement("div");
       el.className = "label3d"; el.textContent = r.n.label;
       const c = r.col.map((x) => Math.round(Math.pow(Math.min(1, x), 1 / 2.2) * 255));
@@ -271,6 +318,24 @@
       camera.radius = c[5];
       camera.fov = c[6] * Math.PI / 180;
       camera.getViewMatrix(true);
+
+      // screens: ease in, then show the atlas tile for scene time t
+      for (const r of screens) {
+        const a = clamp((t - r.sc.appear_at) / 0.6, 0, 1);
+        r.mesh.scaling.setAll(Math.max(0.0001, a * a * (3 - 2 * a)));
+        const bob = r.sc.frame === "floating" ? Math.sin(t * 0.8) * 0.05 : 0;
+        r.mesh.position.set(r.base.x, r.base.y + bob, r.base.z);
+        if (!r.pages) continue;   // textures are created inside the readiness gate
+        let f = Math.floor((t - r.playFrom) * r.sc.rate * r.m.fps + 1e-6);
+        if (f < 0) f = 0;
+        f = r.sc.loop ? f % r.m.frames : Math.min(f, r.m.frames - 1);
+        let k = 0, local = f;
+        while (k < r.m.pages.length - 1 && local >= r.m.pages[k].frames) { local -= r.m.pages[k].frames; k++; }
+        const pg = r.m.pages[k], tex = r.pages[k];
+        if (r.pm.emissiveTexture !== tex) r.pm.emissiveTexture = tex;
+        tex.uOffset = (local % r.m.cols) * r.m.tile[0] / pg.width;
+        tex.vOffset = 1 - (Math.floor(local / r.m.cols) + 1) * r.m.tile[1] / pg.height;
+      }
 
       // nodes: pop-in with overshoot, gentle float, slow spin
       for (const r of nodes) {
@@ -351,6 +416,26 @@
     // Readiness gate: include render targets (DOF depth, glow, shadow map, environment); warm-render
     // until every effect reports ready, then reset so HyperFrames' own t=0 seek produces frame 0.
     scene.whenReadyAsync(true).then(async () => {
+      // every atlas page must be decoded and uploaded, not only the page bound at t=0;
+      // a failed page rejects here, so the readiness gate never opens without its frames
+      for (const r of screens) {
+        const imgs = await Promise.all(r.images);
+        // drawn onto canvas-backed textures (as the floor grid is): no loader, no network access
+        r.pages = imgs.map((img, k) => {
+          const pg = r.m.pages[k];
+          if (img.naturalWidth !== pg.width || img.naturalHeight !== pg.height)
+            throw new Error("scene3d screen frames have unexpected size: " + pg.file);
+          const tex = new B.DynamicTexture("svt_" + r.sc.id + "_" + k, { width: pg.width, height: pg.height },
+            scene, false, B.Texture.BILINEAR_SAMPLINGMODE);
+          tex.getContext().drawImage(img, 0, 0);
+          tex.update(true);
+          tex.wrapU = tex.wrapV = B.Texture.CLAMP_ADDRESSMODE;
+          tex.uScale = r.m.tile[0] / pg.width; tex.vScale = r.m.tile[1] / pg.height;
+          return tex;
+        });
+        r.pm.emissiveTexture = r.pages[0];
+      }
+      await scene.whenReadyAsync(true);
       const probes = [0, 0.25, 0.5, 0.75, 1].map((f) => f * DURATION);
       for (let pass = 0; pass < 20; pass++) {
         for (const tp of probes) { lastT = -1; renderAt(tp); }

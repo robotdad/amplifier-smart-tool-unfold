@@ -104,6 +104,82 @@ def run(argv, timeout=180, reject_font_errors=False):
     return result.stdout
 
 
+# Video screens: a clip is decoded once, at author time, into PNG frame atlases. The runtime
+# shows the tile for scene time t, so playback never depends on a media clock.
+SCREEN_ATLAS_FPS = 15
+SCREEN_TILE_WIDTH = 512
+SCREEN_ATLAS_MAX = 4096
+SCREEN_MAX_SPAN = 60.0
+
+
+def probe_video_duration(path):
+    out = run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+               str(path)], timeout=30)
+    try:
+        value = float(out.strip())
+    except ValueError:
+        raise UnfoldError("INVALID_ASSET", "Screen video duration could not be read.") from None
+    if not math.isfinite(value) or value <= 0:
+        raise UnfoldError("INVALID_ASSET", "Screen video has no playable duration.")
+    return value
+
+
+def decode_screen_atlases(video, media_dir, screen_id, start, span):
+    from PIL import Image
+
+    out_dir = Path(media_dir) / "screens"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="unfold-screen-") as temporary:
+        # Single-threaded software decode with fixed filters keeps the frames byte-stable.
+        run(["ffmpeg", "-v", "error", "-nostdin", "-threads", "1", "-ss", f"{start:.6f}",
+             "-t", f"{span:.6f}", "-i", str(video), "-an", "-threads", "1",
+             "-vf", f"fps={SCREEN_ATLAS_FPS},scale={SCREEN_TILE_WIDTH}:-2:flags=lanczos",
+             "-pix_fmt", "rgb24", "-fps_mode", "cfr", "-f", "image2",
+             str(Path(temporary) / "f%05d.png")], timeout=600)
+        frames = sorted(Path(temporary).glob("f*.png"))
+        if not frames:
+            raise UnfoldError("INVALID_ASSET", "Screen video produced no frames.")
+        with Image.open(frames[0]) as first:
+            tile_w, tile_h = first.size
+        cols = max(1, SCREEN_ATLAS_MAX // tile_w)
+        rows = max(1, SCREEN_ATLAS_MAX // tile_h)
+        per_page = cols * rows
+        pages = []
+        for offset in range(0, len(frames), per_page):
+            chunk = frames[offset:offset + per_page]
+            used_rows = math.ceil(len(chunk) / cols)
+            atlas = Image.new("RGB", (cols * tile_w, used_rows * tile_h))
+            for index, frame in enumerate(chunk):
+                with Image.open(frame) as image:
+                    atlas.paste(image.convert("RGB"), ((index % cols) * tile_w, (index // cols) * tile_h))
+            name = f"{screen_id}_{len(pages)}.png"
+            atlas.save(out_dir / name)
+            pages.append({"file": f"media/screens/{name}", "frames": len(chunk),
+                          "width": atlas.width, "height": atlas.height,
+                          "sha256": digest(out_dir / name)})
+    return {"tile": [tile_w, tile_h], "cols": cols, "fps": SCREEN_ATLAS_FPS,
+            "frames": len(frames), "aspect": tile_h / tile_w, "pages": pages}
+
+
+
+def retained_screens(directory):
+    path = Path(directory) / "screens.json"
+    if not path.exists():
+        return {}
+    screens = json.loads(path.read_text())
+    for manifest in screens.values():
+        identity = manifest.get("asset_id", "")
+        if len(identity) != 32 or any(c not in "0123456789abcdef" for c in identity):
+            raise UnfoldError("INVALID_ASSET", "Invalid screen video identity.")
+        if manifest.get("suffix") not in {".mp4", ".mov", ".webm", ".mkv", ".gif"}:
+            raise UnfoldError("INVALID_ASSET", "Invalid screen video type.")
+        for page in manifest.get("pages", []):
+            name = page.get("file", "")
+            if not name.startswith("media/screens/") or ".." in name or "/" in name[len("media/screens/"):]:
+                raise UnfoldError("INVALID_ASSET", "Invalid screen frame path.")
+    return screens
+
+
 class Backend:
     def __init__(self, root):
         self.root = Path(root).expanduser().resolve()
@@ -188,6 +264,41 @@ class Backend:
             write_json(directory / "fonts.json", font_manifest)
         elif (directory / "fonts.json").exists():
             (directory / "fonts.json").unlink()
+        screens_manifest = {}
+        if scene.scene3d is not None and scene.scene3d.screens:
+            media = directory / "media"
+            media.mkdir(exist_ok=True)
+            if (media / "screens").exists():
+                shutil.rmtree(media / "screens")
+            for screen in scene.scene3d.screens:
+                asset = resources.get(screen.asset_id)
+                if not isinstance(asset, dict) or asset.get("role") != "video":
+                    raise UnfoldError("MISSING_DEPENDENCY", "Screen video is not in the selected identity.")
+                source = Path(asset["path"])
+                if not source.is_file() or digest(source) != asset["sha256"]:
+                    raise UnfoldError("MATERIAL_CHANGED", "Screen video is missing or changed.")
+                suffix = source.suffix.lower()
+                if suffix not in {".mp4", ".mov", ".webm", ".mkv", ".gif"}:
+                    raise UnfoldError("INVALID_ASSET", "Screen video must be mp4, mov, webm, mkv or gif.")
+                retained = media / (screen.asset_id + suffix)
+                if not retained.exists() or digest(retained) != asset["sha256"]:
+                    shutil.copyfile(source, retained)
+                if digest(retained) != asset["sha256"]:
+                    raise UnfoldError("MATERIAL_CHANGED", "Screen video changed during retention.")
+                length = probe_video_duration(retained)
+                if screen.media_start >= length:
+                    raise UnfoldError("INVALID_ASSET", "Screen media_start is beyond the end of the video.")
+                play_from = screen.appear_at if screen.play_from is None else screen.play_from
+                remaining = length - screen.media_start
+                needed = remaining if screen.loop else max(0.0, scene.duration - play_from) * screen.rate
+                span = max(1 / SCREEN_ATLAS_FPS, min(remaining, needed, SCREEN_MAX_SPAN))
+                manifest = decode_screen_atlases(retained, media, screen.id, screen.media_start, span)
+                manifest.update(asset_id=screen.asset_id, suffix=suffix, sha256=asset["sha256"],
+                                play_from=play_from)
+                screens_manifest[screen.id] = manifest
+            write_json(directory / "screens.json", screens_manifest)
+        elif (directory / "screens.json").exists():
+            (directory / "screens.json").unlink()
         resources = {i: a for i, a in resources.items() if not isinstance(a, dict)}
         if resources:
             from PIL import Image
@@ -352,6 +463,7 @@ class Backend:
                     "fps": 30,
                     "transparent": scene.background == "transparent",
                     "scene3d": scene.scene3d.model_dump(),
+                    "screens": screens_manifest,
                 },
                 separators=(",", ":"),
             ).replace("<", "\\u003c")
@@ -430,6 +542,15 @@ body{{font-family:system-ui,sans-serif}}#root{{position:relative;width:100%;heig
             extra += identity + face["sha256"]
         if (Path(directory) / "fonts.json").exists():
             extra += digest(Path(directory) / "fonts.json")
+        for manifest in retained_screens(directory).values():
+            video = Path(directory) / "media" / (manifest["asset_id"] + manifest["suffix"])
+            if digest(video) != manifest["sha256"]:
+                raise UnfoldError("MATERIAL_CHANGED", "Retained screen video changed.")
+            for page in manifest["pages"]:
+                if digest(Path(directory) / page["file"]) != page["sha256"]:
+                    raise UnfoldError("MATERIAL_CHANGED", "Retained screen frames changed.")
+        if (Path(directory) / "screens.json").exists():
+            extra += digest(Path(directory) / "screens.json")
         names = ["index.html", "gsap.min.js", "scene.json"]
         # Present only when scene3d was authored; absent for non-3D scenes (unchanged hash).
         for name in ("babylon.js", "scene3d_runtime.js"):
@@ -446,6 +567,9 @@ body{{font-family:system-ui,sans-serif}}#root{{position:relative;width:100%;heig
                      for i in json.loads(manifest.read_text())} if manifest.exists() else {}
         resources.update({i: {**face, "path": str(directory / "fonts" / (i + face["suffix"]))}
                           for i, face in retained_fonts(directory).items()})
+        resources.update({m["asset_id"]: {"role": "video", "sha256": m["sha256"],
+                                          "path": str(directory / "media" / (m["asset_id"] + m["suffix"]))}
+                          for m in retained_screens(directory).values()})
         return resources
 
     def render(self, directory, output, alpha=False):
