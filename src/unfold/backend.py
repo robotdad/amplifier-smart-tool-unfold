@@ -265,12 +265,23 @@ class Backend:
         elif (directory / "fonts.json").exists():
             (directory / "fonts.json").unlink()
         screens_manifest = {}
-        if scene.scene3d is not None and scene.scene3d.screens:
+        # Every video source: screens, and nodes that show a video on their surface. Each is decoded
+        # into its own atlases, keyed by its scene3d id, and covered by the source hash.
+        from types import SimpleNamespace
+
+        video_sources = []
+        if scene.scene3d is not None:
+            video_sources += list(scene.scene3d.screens)
+            video_sources += [
+                SimpleNamespace(id=n.id, appear_at=n.appear_at, **n.media.model_dump())
+                for n in scene.scene3d.nodes if n.media is not None
+            ]
+        if video_sources:
             media = directory / "media"
             media.mkdir(exist_ok=True)
             if (media / "screens").exists():
                 shutil.rmtree(media / "screens")
-            for screen in scene.scene3d.screens:
+            for screen in video_sources:
                 asset = resources.get(screen.asset_id)
                 if not isinstance(asset, dict) or asset.get("role") != "video":
                     raise UnfoldError("MISSING_DEPENDENCY", "Screen video is not in the selected identity.")

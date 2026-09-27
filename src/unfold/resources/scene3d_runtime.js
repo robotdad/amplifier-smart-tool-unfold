@@ -125,6 +125,28 @@
     shadow.usePercentageCloserFiltering = true; shadow.filteringQuality = B.ShadowGenerator.QUALITY_MEDIUM;
     shadow.bias = 0.0015; shadow.normalBias = 0.02; shadow.darkness = 0.25;
 
+    // --- video surfaces (screens and video nodes) share one decoded-atlas path
+    const MEDIA = DATA.screens || {};
+    const videoSurfaces = [];
+    function videoMaterial(id) {
+      const m = MEDIA[id];
+      if (!m || !m.pages || !m.pages.length) throw new Error("scene3d video has no decoded frames: " + id);
+      const pm = new B.StandardMaterial("svm_" + id, scene);
+      pm.disableLighting = true; pm.fogEnabled = false;
+      pm.diffuseColor = new C3(0, 0, 0); pm.specularColor = new C3(0, 0, 0);
+      // pages load through <img> (img-src 'self'); the page forbids fetch/XHR (connect-src 'none')
+      const images = m.pages.map((pg) => {
+        const img = new Image();
+        const loaded = new Promise((res, rej) => {
+          img.onload = () => res(img);
+          img.onerror = () => rej(new Error("scene3d video frames failed to load: " + pg.file));
+        });
+        img.src = pg.file;
+        return loaded;
+      });
+      return { m, pm, images };
+    }
+
     // --- stable node geometry
     const byId = new Map();
     const rngFor = (id) => mulberry32((hashString(id) ^ (S.seed >>> 0)) >>> 0);
@@ -132,6 +154,26 @@
       const col = ROLE[n.role] || ROLE.neutral;
       const mesh = makeShape(B, scene, n.shape, n.size, "n_" + n.id);
       mesh.material = makeMaterial(B, scene, n.material, col, "m_" + n.id);
+      let video = null, vmesh = null, facing = false;
+      if (n.media) {   // a library video on the node's surface, following the node as it moves
+        const surface = n.media.surface === "auto" ? MEDIA_AUTO[n.shape] : n.media.surface;
+        facing = surface === "facing_camera";
+        video = videoMaterial(n.id);
+        if (surface === "one_face" || (facing && n.shape === "cube")) {
+          // the clip sits on one face (the front of a box, the top of a platform); the node keeps its material
+          const w = n.shape === "platform" ? n.size * 1.7 : n.size * 1.1 * 0.86;
+          vmesh = B.MeshBuilder.CreatePlane("vf_" + n.id, { width: w, height: w * video.m.aspect }, scene);
+          vmesh.parent = mesh; vmesh.material = video.pm;
+          if (n.shape === "platform") { vmesh.rotation.x = Math.PI / 2; vmesh.position.y = n.size * 0.09 + 0.012; }   // normal +Y: faces up
+          else vmesh.position.z = -(n.size * 0.55) - 0.012;   // planes face -Z: the node's front
+        } else {
+          if (n.shape === "cube") faceUVs(B, mesh);   // every face shows the whole frame, upright
+          // Babylon's built-in UVs run differently per shape (measured with a quadrant clip at spin 0):
+          // correct them so the clip reads upright and unmirrored from the front, like a screen.
+          else if (VIDEO_UV_FLIP[n.shape]) flipUVs(B, mesh, ...VIDEO_UV_FLIP[n.shape]);
+          mesh.material = video.pm; vmesh = mesh;
+        }
+      }
       shadow.addShadowCaster(mesh);
       const base = new V(n.position[0], n.position[1] + (n.shape === "platform" ? 0 : 0.0), n.position[2]);
       let ring = null;
@@ -141,6 +183,11 @@
         rm.emissiveColor = new C3(col[0] * 1.6, col[1] * 1.6, col[2] * 1.6); ring.material = rm;
       }
       const rec = { n, i, mesh, ring, base, col, phase: rngFor(n.id)() * 6.283 };
+      if (video) {
+        Object.assign(rec, { id: n.id, m: video.m, pm: video.pm, images: video.images, pages: null,
+          playFrom: video.m.play_from, rate: n.media.rate, loop: n.media.loop, vmesh, facing });
+        videoSurfaces.push(rec);
+      }
       byId.set(n.id, rec);
       return rec;
     });
@@ -187,7 +234,9 @@
       }
       if (frame) { frame.parent = pivot; frame.position.z = 0.06; }   // behind the picture (planes face -Z)
       const rec = { n: { id: sc.id, label: sc.label, appear_at: sc.appear_at, size: h * 0.6 },
-        sc, m, mesh: pivot, pic, frame, pm, images, pages: null, base, col, playFrom: m.play_from };
+        sc, m, mesh: pivot, pic, frame, pm, images, pages: null, base, col, playFrom: m.play_from,
+        id: sc.id, rate: sc.rate, loop: sc.loop };
+      videoSurfaces.push(rec);
       byId.set(sc.id, rec);
       return rec;
     });
@@ -246,6 +295,7 @@
     // the picture shows true colour; its frame sits right behind it, so the glow blur from the
     // frame's faint role emissive would wash over the picture
     for (const r of screens) { glow.addExcludedMesh(r.pic); if (r.frame) glow.addExcludedMesh(r.frame); }
+    for (const r of videoSurfaces) if (!r.sc) glow.addExcludedMesh(r.vmesh);   // video nodes: true colour
     const pipe = new B.DefaultRenderingPipeline("pipe", true, scene, [camera]);
     pipe.samples = 4; pipe.fxaaEnabled = true;
     pipe.bloomEnabled = true; [pipe.bloomThreshold, pipe.bloomWeight, pipe.bloomKernel] = post.bloom; pipe.bloomScale = 0.5;
@@ -307,6 +357,20 @@
       return p < 0 || p > 1 ? -1 : p;
     }
 
+    // the atlas tile for scene time t: a pure function of t, identical on every render worker
+    function showFrame(r, t) {
+      if (!r.pages) return;   // textures are created inside the readiness gate
+      let f = Math.floor((t - r.playFrom) * r.rate * r.m.fps + 1e-6);
+      if (f < 0) f = 0;
+      f = r.loop ? f % r.m.frames : Math.min(f, r.m.frames - 1);
+      let k = 0, local = f;
+      while (k < r.m.pages.length - 1 && local >= r.m.pages[k].frames) { local -= r.m.pages[k].frames; k++; }
+      const pg = r.m.pages[k], tex = r.pages[k];
+      if (r.pm.emissiveTexture !== tex) r.pm.emissiveTexture = tex;
+      tex.uOffset = (local % r.m.cols) * r.m.tile[0] / pg.width;
+      tex.vOffset = 1 - (Math.floor(local / r.m.cols) + 1) * r.m.tile[1] / pg.height;
+    }
+
     function renderAt(t) {
       t = clamp(t, 0, DURATION);
       if (t === lastT) return;
@@ -327,17 +391,9 @@
         r.mesh.scaling.setAll(Math.max(0.0001, a * a * (3 - 2 * a)));
         const bob = r.sc.frame === "floating" ? Math.sin(t * 0.8) * 0.05 : 0;
         r.mesh.position.set(r.base.x, r.base.y + bob, r.base.z);
-        if (!r.pages) continue;   // textures are created inside the readiness gate
-        let f = Math.floor((t - r.playFrom) * r.sc.rate * r.m.fps + 1e-6);
-        if (f < 0) f = 0;
-        f = r.sc.loop ? f % r.m.frames : Math.min(f, r.m.frames - 1);
-        let k = 0, local = f;
-        while (k < r.m.pages.length - 1 && local >= r.m.pages[k].frames) { local -= r.m.pages[k].frames; k++; }
-        const pg = r.m.pages[k], tex = r.pages[k];
-        if (r.pm.emissiveTexture !== tex) r.pm.emissiveTexture = tex;
-        tex.uOffset = (local % r.m.cols) * r.m.tile[0] / pg.width;
-        tex.vOffset = 1 - (Math.floor(local / r.m.cols) + 1) * r.m.tile[1] / pg.height;
+        showFrame(r, t);
       }
+      for (const r of videoSurfaces) if (!r.sc) showFrame(r, t);   // video nodes
 
       // nodes: pop-in with overshoot, gentle float, slow spin
       for (const r of nodes) {
@@ -346,7 +402,12 @@
         const bob = r.n.shape === "platform" ? 0 : Math.sin(t * 0.9 + r.phase) * 0.06 * r.n.size;
         r.mesh.position.set(r.base.x, r.base.y + bob, r.base.z);
         r.mesh.scaling.setAll(s);
-        if (r.n.shape === "cube" || r.n.shape === "icosahedron" || r.n.shape === "torus") {
+        if (r.facing) {   // turn about the vertical axis so the clip side always faces the camera
+          const dx = camera.position.x - r.mesh.position.x, dz = camera.position.z - r.mesh.position.z;
+          r.mesh.rotation.set(0, Math.atan2(-dx, -dz), 0);
+        } else if (r.n.spin != null) {   // explicit spin about the vertical axis, any shape
+          r.mesh.rotation.set(0, t * r.n.spin * Math.PI / 180, 0);   // starts face-on: spin 0 = still, facing the default camera
+        } else if (r.n.shape === "cube" || r.n.shape === "icosahedron" || r.n.shape === "torus") {
           r.mesh.rotation.set(0.35 * Math.sin(t * 0.4 + r.phase), t * 0.35 + r.phase, 0.2 * Math.cos(t * 0.3 + r.phase));
         }
         if (r.ring) {
@@ -420,14 +481,14 @@
     scene.whenReadyAsync(true).then(async () => {
       // every atlas page must be decoded and uploaded, not only the page bound at t=0;
       // a failed page rejects here, so the readiness gate never opens without its frames
-      for (const r of screens) {
+      for (const r of videoSurfaces) {
         const imgs = await Promise.all(r.images);
         // drawn onto canvas-backed textures (as the floor grid is): no loader, no network access
         r.pages = imgs.map((img, k) => {
           const pg = r.m.pages[k];
           if (img.naturalWidth !== pg.width || img.naturalHeight !== pg.height)
             throw new Error("scene3d screen frames have unexpected size: " + pg.file);
-          const tex = new B.DynamicTexture("svt_" + r.sc.id + "_" + k, { width: pg.width, height: pg.height },
+          const tex = new B.DynamicTexture("svt_" + r.id + "_" + k, { width: pg.width, height: pg.height },
             scene, false, B.Texture.BILINEAR_SAMPLINGMODE);
           tex.getContext().drawImage(img, 0, 0);
           tex.update(true);
@@ -512,6 +573,34 @@
       case "platform": return MB.CreateCylinder(name, { diameter: size * 2.4, height: size * 0.18, tessellation: 128 }, scene);
       default: return MB.CreateSphere(name, { diameter: size * 1.2, segments: 64 }, scene);
     }
+  }
+  // Per-face UVs for the rounded cube: each face shows the whole texture, upright and unmirrored as
+  // seen from outside (same convention as a screen plane: u left->right, v bottom->top).
+  function faceUVs(B, mesh) {
+    const pos = mesh.getVerticesData(B.VertexBuffer.PositionKind), uv = [];
+    let h = 0;
+    for (let i = 0; i < pos.length; i++) h = Math.max(h, Math.abs(pos[i]));
+    for (let i = 0; i < pos.length; i += 3) {
+      const x = pos[i] / h, y = pos[i + 1] / h, z = pos[i + 2] / h;
+      const ax = Math.abs(x), ay = Math.abs(y), az = Math.abs(z);
+      let u, v;
+      if (ax >= ay && ax >= az) { u = x > 0 ? z : -z; v = y; }        // right (+x) / left (-x)
+      else if (ay >= az) { u = x; v = y > 0 ? z : -z; }                // top / bottom
+      else { u = z > 0 ? -x : x; v = y; }                               // back (+z) / front (-z)
+      uv.push((u + 1) / 2, (v + 1) / 2);
+    }
+    mesh.setVerticesData(B.VertexBuffer.UVKind, uv, true);
+  }
+  const VIDEO_UV_FLIP = { sphere: [false, true], cylinder: [true, false], capsule: [true, true] };  // [u, v]
+  // media.surface "auto" by shape (mirrors unfold.models.MEDIA_SURFACES)
+  const MEDIA_AUTO = { cube: "every_face", platform: "one_face", sphere: "wrap", capsule: "wrap", cylinder: "wrap" };
+  function flipUVs(B, mesh, flipU, flipV) {
+    const uv = mesh.getVerticesData(B.VertexBuffer.UVKind);
+    for (let i = 0; i < uv.length; i += 2) {
+      if (flipU) uv[i] = 1 - uv[i];
+      if (flipV) uv[i + 1] = 1 - uv[i + 1];
+    }
+    mesh.setVerticesData(B.VertexBuffer.UVKind, uv, true);
   }
   // superellipsoid: a smooth rounded cube, not a hard low-poly box
   function roundedCube(B, scene, name, size) {

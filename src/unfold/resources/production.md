@@ -205,5 +205,11 @@ writes the source, so playback follows scene time exactly and is identical on ev
 worker. Use a screen only when the clip itself is the subject, keep at most two visible, and
 target the screen with a camera shot when its content must be read.
 
+A node can also show a video on its surface (`media`, on cube, platform, sphere, capsule or
+cylinder) while it moves. `media.surface` sets how it sits: `every_face`, `one_face`, `wrap` or
+`facing_camera` (the object turns to face the camera so the clip stays readable); `auto` picks by
+shape. When the request does not say how the clip should sit on the object, ask the user; if you
+cannot, use `auto` and name the choice in the explanation.
+
 scene3d renders are meaningfully slower than 2D-only scenes (software GL, roughly
 1.5 s/frame); budget fewer render/repair cycles when scene3d is present.

@@ -117,6 +117,33 @@ a retained Unfold render shown inside a larger explanation, or a clip framed as 
 - The clip is decoded at 15 frames per second and 512 px wide. Fine text inside the clip will
   not survive; show it large or not at all.
 
+## 5b. Video on objects
+
+A node can show a library video on its own surface (`media`), and keep moving: pop-in, bob, `spin`.
+Only these shapes take video: cube, platform, sphere, capsule, cylinder.
+
+**How the clip sits on the object is the user's call.** If the request does not say, ask one short
+question offering only the options for that shape; if you cannot ask, use `auto` and say which you
+used in the `explanation`.
+
+| `media.surface` | cube | platform | sphere / capsule / cylinder |
+|---|---|---|---|
+| `auto` (default) | = `every_face` | = `one_face` | = `wrap` |
+| `every_face` | the same clip on all six faces | - | - |
+| `one_face` | the front face only; the rest keeps the material | the top | - |
+| `wrap` | - | - | wraps once around |
+| `facing_camera` | turns to face the camera; clip on that face | - | turns the wrap's centre to the camera |
+
+- Choose `facing_camera` when the audience must read the clip while the camera moves (the object
+  "billboards"); it cannot be combined with `spin`.
+- Choose `every_face` or `wrap` with `spin` when the clip is texture or atmosphere, not something
+  to read; a wrapped clip is only half visible at a time.
+- Choose `one_face` for a device or monitor-like object whose other sides should look solid.
+- `spin: 0` keeps a node still, facing the default camera; any other value turns it at that many
+  degrees per second.
+- For reading-critical footage prefer a `screens` entry or `facing_camera`: faces are small, and the
+  clip is decoded at 512 px wide.
+
 ## 6. Post and moments
 
 | Post | Look | Use |

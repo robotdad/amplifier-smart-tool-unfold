@@ -212,6 +212,33 @@ def _bounded_node_position(value):
 NodePosition = Annotated[tuple[float, float, float], AfterValidator(_bounded_node_position)]
 
 
+# How a video sits on each shape. Box shapes show it on faces; round shapes wrap it around; torus and
+# icosahedron are not offered (their surfaces scramble a picture). "auto" resolves per shape.
+MEDIA_SURFACES = {
+    "cube": {"auto": "every_face", "every_face": 1, "one_face": 1, "facing_camera": 1},
+    "platform": {"auto": "one_face", "one_face": 1},
+    "sphere": {"auto": "wrap", "wrap": 1, "facing_camera": 1},
+    "capsule": {"auto": "wrap", "wrap": 1, "facing_camera": 1},
+    "cylinder": {"auto": "wrap", "wrap": 1, "facing_camera": 1},
+}
+MEDIA_SHAPES = tuple(MEDIA_SURFACES)
+
+
+class Media3D(Strict):
+    """A library video shown on a node's surface. Code decodes it into frame atlases at author
+    time; the runtime shows the frame for scene time t while the node moves."""
+
+    asset_id: str = Field(pattern=r"^[a-f0-9]{32}$")  # a video asset from the selected identity
+    media_start: float = Field(default=0, ge=0, le=600)  # seconds into the clip
+    play_from: float | None = Field(default=None, ge=0, le=60)  # scene time playback starts; None = appear_at
+    rate: float = Field(default=1.0, ge=0.25, le=4)
+    loop: bool = False  # False holds the last frame
+    # every_face: each face of a box shows the clip; one_face: only the front face (top, for a platform);
+    # wrap: wraps once around a round shape; facing_camera: the node keeps turning to face the camera and
+    # the clip is on the side it shows the camera. auto picks every_face / one_face / wrap by shape.
+    surface: Literal["auto", "every_face", "one_face", "wrap", "facing_camera"] = "auto"
+
+
 class Node3D(Strict):
     id: str = Field(pattern=ELEMENT_ID_PATTERN)
     shape: Shape3D = "sphere"
@@ -223,6 +250,22 @@ class Node3D(Strict):
     ring: bool = True
     # Rendered by the runtime as DOM text (textContent), never HTML.
     label: str | None = Field(default=None, max_length=40)
+    media: Media3D | None = None  # plays a library video on the node's surface
+    spin: float | None = Field(default=None, ge=-360, le=360)  # degrees/second about the vertical axis
+
+    @model_validator(mode="after")
+    def media_fits_shape(self):
+        if self.media is None:
+            return self
+        if self.shape not in MEDIA_SURFACES:
+            raise ValueError(f"media is supported on {', '.join(MEDIA_SHAPES)} nodes, not {self.shape}.")
+        allowed = [k for k in MEDIA_SURFACES[self.shape] if k != "auto"]
+        if self.media.surface != "auto" and self.media.surface not in allowed:
+            raise ValueError(f"media surface {self.media.surface!r} is not available on a {self.shape}; "
+                             f"use auto or one of: {', '.join(allowed)}.")
+        if self.media.surface == "facing_camera" and self.spin is not None:
+            raise ValueError("spin cannot be combined with media surface 'facing_camera'.")
+        return self
 
 
 class Link3D(Strict):
@@ -429,6 +472,11 @@ class Scene(Strict):
                 for screen in self.scene3d.screens
             ):
                 raise ValueError("scene3d screen timing must fit the scene duration.")
+            if any(
+                node.media is not None and (node.media.play_from or 0) > self.duration + 1e-9
+                for node in self.scene3d.nodes
+            ):
+                raise ValueError("scene3d node media timing must fit the scene duration.")
         last_frame = (encoded_frames(self.duration) - 1) / FPS
         points_tweens_by_target = {}
         for tween in self.tweens:

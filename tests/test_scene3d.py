@@ -384,3 +384,110 @@ def test_scene3d_render_with_a_mid_timeline_screen_is_deterministic_across_worke
     centre = {k: (sum(p[0] for p in v) / len(v), sum(p[1] for p in v) / len(v)) for k, v in found.items()}
     assert centre["red"][1] < centre["blue"][1]   # upright
     assert centre["red"][0] < centre["white"][0]  # not mirrored
+
+
+# --- video on animated nodes ----------------------------------------------------
+
+
+def test_node_media_is_refused_on_shapes_whose_uvs_scramble_video():
+    for shape in ("torus", "icosahedron"):
+        with pytest.raises(ValueError, match="media is supported"):
+            node(shape=shape, media={"asset_id": VIDEO_ID})
+    assert node(shape="cube", media={"asset_id": VIDEO_ID}, spin=45).media.asset_id == VIDEO_ID
+
+
+def test_node_spin_is_bounded():
+    with pytest.raises(ValueError):
+        node(spin=400)
+
+
+def test_node_media_timing_must_fit_the_scene_duration():
+    with pytest.raises(ValueError, match="node media timing"):
+        Scene(title="t", duration=2, explanation="e",
+              scene3d=scene3d(nodes=[node(media={"asset_id": VIDEO_ID, "play_from": 3})]))
+
+
+def video_nodes_scene(duration=2):
+    return Scene(
+        title="Video nodes", duration=duration, output={"resolution": "1080p"}, explanation="Clips on moving objects",
+        scene3d=Scene3D(
+            post="clean", floor=False,
+            nodes=[Node3D(id="still", shape="cube", position=(-3.2, 2.2, 0), size=2.2, spin=0, ring=False,
+                          media={"asset_id": VIDEO_ID}),
+                   Node3D(id="globe", shape="sphere", position=(3.2, 2.2, 0), size=2.2, spin=40, ring=False,
+                          appear_at=0.6, media={"asset_id": VIDEO_ID, "loop": True})],
+            camera=[Shot3D(at=0, azimuth=-90, elevation=3, distance=11)]),
+    )
+
+
+@needs_ffmpeg
+def test_author_decodes_node_media_into_its_own_atlas(tmp_path, monkeypatch):
+    backend = fixture_backend(tmp_path, monkeypatch)
+    clip = synthetic_clip(tmp_path)
+    source = tmp_path / "source"
+    backend.author(video_nodes_scene(), source, video_resources(clip))
+    import json
+
+    manifest = json.loads((source / "screens.json").read_text())
+    assert set(manifest) == {"still", "globe"}
+    assert all(m["tile"] == [512, 288] and m["frames"] > 0 for m in manifest.values())
+    assert manifest["globe"]["play_from"] == 0.6
+
+
+@pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs a babylonjs-equipped backend")
+def test_scene3d_render_with_video_on_moving_nodes_is_deterministic_and_visible(tmp_path):
+    backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
+    clip = quadrant_clip(tmp_path)
+    scene = video_nodes_scene(duration=2)
+    source = tmp_path / "source"
+    backend.author(scene, source, video_resources(clip))
+    two_worker_output = tmp_path / "two.mp4"
+    backend.render(source, two_worker_output)
+    one_worker_output = tmp_path / "one.mp4"
+    backend._run_cli(["render", str(source), "--output", str(one_worker_output), "--format", "mp4",
+                      "--fps", "30", "--workers", "1", "--quality", "standard"],
+                     timeout=max(240, int(120 + 75 * scene.duration)))
+
+    def framemd5(path):
+        return run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "framemd5", "-"], timeout=60)
+
+    assert framemd5(two_worker_output) == framemd5(one_worker_output)
+
+    from PIL import Image
+
+    still = tmp_path / "still.png"
+    run(["ffmpeg", "-v", "error", "-y", "-i", str(two_worker_output), "-vf", "select='eq(n\\,45)'",
+         "-frames:v", "1", "-fps_mode", "vfr", str(still)], timeout=60)
+    image = Image.open(still).convert("RGB")
+
+    def colours(x0, x1):
+        found = {}
+        for y in range(0, image.height, 3):
+            for x in range(x0, x1, 3):
+                r, g, b = image.getpixel((x, y))
+                kind = ("red" if r > 150 and g < 90 and b < 90 else "blue" if b > 150 and r < 90 and g < 110
+                        else "white" if min(r, g, b) > 190 else None)
+                if kind:
+                    found.setdefault(kind, []).append((x, y))
+        return {k: (sum(p[0] for p in v) / len(v), sum(p[1] for p in v) / len(v), len(v)) for k, v in found.items()}
+
+    cube = colours(0, image.width // 2)
+    globe = colours(image.width // 2, image.width)
+    assert all(cube.get(k, (0, 0, 0))[2] > 300 for k in ("red", "blue", "white")), cube
+    assert cube["red"][1] < cube["blue"][1] and cube["red"][0] < cube["white"][0]   # upright, unmirrored
+    assert sum(v[2] for v in globe.values()) > 300, globe                         # the spinning sphere shows the clip
+
+
+def test_media_surface_is_a_small_per_shape_set():
+    ok = [("cube", "every_face", None), ("cube", "one_face", 30), ("cube", "facing_camera", None),
+          ("sphere", "wrap", 20), ("capsule", "facing_camera", None), ("platform", "one_face", None),
+          ("cylinder", "auto", 15)]
+    for shape, surface, spin in ok:
+        node(shape=shape, spin=spin, media={"asset_id": VIDEO_ID, "surface": surface})
+    bad = [("cube", "wrap", None), ("sphere", "one_face", None), ("platform", "every_face", None),
+           ("sphere", "every_face", None)]
+    for shape, surface, spin in bad:
+        with pytest.raises(ValueError, match="not available"):
+            node(shape=shape, spin=spin, media={"asset_id": VIDEO_ID, "surface": surface})
+    with pytest.raises(ValueError, match="facing_camera"):
+        node(shape="cube", spin=20, media={"asset_id": VIDEO_ID, "surface": "facing_camera"})
