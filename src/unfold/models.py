@@ -104,8 +104,11 @@ class Orbit(Strict):
     marker_radius: float = Field(default=0, ge=0, le=20)
 
 
+ELEMENT_ID_PATTERN = r"^[a-z][a-z0-9_]{0,39}$"
+
+
 class Element(Strict):
-    id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,39}$")
+    id: str = Field(pattern=ELEMENT_ID_PATTERN)
     kind: Literal["card", "text", "line", "dot", "path", "circle", "arc", "image"]
     asset_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     x: float = Field(ge=0, le=1920)
@@ -189,6 +192,153 @@ class CameraMove(Strict):
     ease: Literal["none", "power2.inOut", "power2.out"] = "power2.inOut"
 
 
+Role3D = Literal["request", "response", "agent", "tool", "data", "error", "cache", "neutral"]
+Material3D = Literal["chrome", "gold", "glass", "ceramic", "matte", "neon", "holo", "obsidian"]
+Shape3D = Literal["sphere", "cube", "capsule", "torus", "cylinder", "icosahedron", "platform"]
+Ease3D = Literal["none", "power2.inOut", "power2.out", "power3.out"]
+
+# stream = throughput A->B, flock = self-organising behaviour, orbit = resident set/queue,
+# burst = discrete event, field = ambient pressure/diffusion.
+EFFECT3D_COUNT_CAPS = {"stream": 2500, "flock": 400, "orbit": 1500, "burst": 600, "field": 3000}
+
+
+def _bounded_node_position(value):
+    x, y, z = value
+    if not (-20 <= x <= 20 and 0 <= y <= 12 and -20 <= z <= 20):
+        raise ValueError("Node position requires x,z in [-20,20] and y in [0,12].")
+    return value
+
+
+NodePosition = Annotated[tuple[float, float, float], AfterValidator(_bounded_node_position)]
+
+
+class Node3D(Strict):
+    id: str = Field(pattern=ELEMENT_ID_PATTERN)
+    shape: Shape3D = "sphere"
+    material: Material3D = "ceramic"
+    role: Role3D = "neutral"
+    position: NodePosition
+    size: float = Field(default=1.0, ge=0.2, le=6)
+    appear_at: float = Field(default=0, ge=0, le=60)
+    ring: bool = True
+    # Rendered by the runtime as DOM text (textContent), never HTML.
+    label: str | None = Field(default=None, max_length=40)
+
+
+class Link3D(Strict):
+    id: str = Field(pattern=ELEMENT_ID_PATTERN)
+    from_node: str
+    to_node: str
+    role: Role3D = "neutral"
+    lift: float = Field(default=1.5, ge=0, le=6)
+    appear_at: float = Field(default=0, ge=0, le=60)
+    draw_duration: float = Field(default=0.8, ge=0, le=10)
+
+    @model_validator(mode="after")
+    def distinct_endpoints(self):
+        if self.from_node == self.to_node:
+            raise ValueError("A link's from_node and to_node must differ.")
+        return self
+
+
+class Effect3D(Strict):
+    id: str = Field(pattern=ELEMENT_ID_PATTERN)
+    preset: Literal["stream", "flock", "orbit", "burst", "field"]
+    node: str
+    to_node: str | None = None
+    role: Role3D = "neutral"
+    start: float = Field(default=0, ge=0, le=60)
+    end: float = Field(..., gt=0, le=60)
+    count: int = Field(..., ge=1)
+    intensity: float = Field(default=1.0, ge=0.2, le=2)
+    speed: float = Field(default=1.0, ge=0.25, le=3)
+    spread: float = Field(default=0.35, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def fits(self):
+        if self.preset == "stream":
+            if self.to_node is None or self.to_node == self.node:
+                raise ValueError("A stream effect requires a to_node different from node.")
+        elif self.to_node is not None:
+            raise ValueError(f"to_node is not permitted for the {self.preset} preset.")
+        if self.end <= self.start:
+            raise ValueError("Effect end must be greater than start.")
+        cap = EFFECT3D_COUNT_CAPS[self.preset]
+        if self.count > cap:
+            raise ValueError(f"{self.preset} effects allow at most {cap} particles.")
+        return self
+
+
+class Shot3D(Strict):
+    """Camera keyframe; the runtime interpolates between keyframes."""
+
+    at: float = Field(..., ge=0, le=60)
+    duration: float = Field(default=0, ge=0, le=20)  # ease-in from previous keyframe; 0 = cut
+    target: str | None = None  # node id; None = centroid of all nodes
+    azimuth: float = Field(default=-90, ge=-720, le=720)
+    elevation: float = Field(default=25, ge=3, le=85)
+    distance: float = Field(default=16, ge=2, le=60)
+    fov: float = Field(default=40, ge=15, le=90)
+    ease: Ease3D = "power2.inOut"
+
+
+class Moment3D(Strict):
+    """A full-screen effect pulse."""
+
+    at: float = Field(..., ge=0, le=60)
+    duration: float = Field(default=0.8, gt=0, le=5)
+    kind: Literal["shockwave", "flash", "glitch", "focus_pull"]
+    node: str | None = None  # shockwave/focus_pull origin; None = screen centre
+    strength: float = Field(default=1.0, ge=0.1, le=2)
+
+
+class Scene3D(Strict):
+    environment: Literal[
+        "studio_dark", "deep_space", "dusk", "lab_white", "neon_grid"
+    ] = "studio_dark"
+    post: Literal["clean", "cinematic", "neon", "dreamy", "noir"] = "cinematic"
+    seed: int = Field(default=1, ge=0, le=2**31 - 1)
+    floor: bool = True
+    nodes: list[Node3D] = Field(..., min_length=1, max_length=24)
+    links: list[Link3D] = Field(default_factory=list, max_length=32)
+    effects: list[Effect3D] = Field(default_factory=list, max_length=12)
+    camera: list[Shot3D] = Field(..., min_length=1, max_length=20)
+    moments: list[Moment3D] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def references(self):
+        node_ids = {n.id for n in self.nodes}
+        link_ids = {link.id for link in self.links}
+        effect_ids = {e.id for e in self.effects}
+        all_ids = node_ids | link_ids | effect_ids
+        if len(all_ids) != len(self.nodes) + len(self.links) + len(self.effects):
+            raise ValueError("scene3d IDs must be unique across nodes, links and effects.")
+        if all_ids & {"root", "world", "scene3d"}:
+            raise ValueError("The IDs root, world and scene3d are reserved by the backend.")
+        for link in self.links:
+            if link.from_node not in node_ids or link.to_node not in node_ids:
+                raise ValueError("Link must reference existing nodes.")
+        for effect in self.effects:
+            if effect.node not in node_ids or (
+                effect.to_node is not None and effect.to_node not in node_ids
+            ):
+                raise ValueError("Effect must reference existing nodes.")
+        for shot in self.camera:
+            if shot.target is not None and shot.target not in node_ids:
+                raise ValueError("Camera shot target must reference an existing node.")
+        for moment in self.moments:
+            if moment.node is not None and moment.node not in node_ids:
+                raise ValueError("Moment must reference an existing node.")
+        if sum(e.count for e in self.effects) > 8000:
+            raise ValueError("Total scene3d particle count must not exceed 8000.")
+        if self.camera[0].at != 0:
+            raise ValueError("The first camera shot must be at time 0.")
+        for earlier, later in zip(self.camera, self.camera[1:]):
+            if later.at <= earlier.at:
+                raise ValueError("Camera shots must be strictly increasing in time.")
+        return self
+
+
 class Scene(Strict):
     """Internal backend-specific authoring input, not a universal interchange format."""
 
@@ -197,11 +347,13 @@ class Scene(Strict):
     # Legacy scene documents have no output field. Never reinterpret their pixels.
     output: OutputSettings = Field(default_factory=lambda: OutputSettings(resolution="720p"))
     background: str = Field(default="#08131f", pattern=r"^(#[0-9a-fA-F]{6}|transparent)$")
-    elements: list[Element] = Field(min_length=1, max_length=70)
-    tweens: list[Tween] = Field(min_length=1, max_length=200)
+    # A scene3d layer can stand alone: elements/tweens are required only without one.
+    elements: list[Element] = Field(default_factory=list, max_length=70)
+    tweens: list[Tween] = Field(default_factory=list, max_length=200)
     camera: list[CameraMove] = Field(default_factory=list, max_length=30)
     stroke_animation: Literal["css", "svg"] = "css"
     explanation: str = Field(min_length=1, max_length=3000)
+    scene3d: Scene3D | None = None
 
     @model_validator(mode="after")
     def references(self):
@@ -215,10 +367,39 @@ class Scene(Strict):
         if any(e.glow_tip for e in self.elements) and self.stroke_animation != "svg":
             raise ValueError("Glowing tips require SVG stroke animation.")
         ids = {element.id for element in self.elements}
-        if ids & {"root", "world"}:
-            raise ValueError("The element IDs root and world are reserved by the backend.")
+        if ids & {"root", "world", "scene3d"}:
+            raise ValueError("The element IDs root, world and scene3d are reserved by the backend.")
         if len(ids) != len(self.elements):
             raise ValueError("Element IDs must be unique.")
+        if self.scene3d is None:
+            if not self.elements:
+                raise ValueError("Provide at least one element, or a scene3d layer.")
+            if not self.tweens:
+                raise ValueError("Provide at least one tween, or a scene3d layer.")
+        else:
+            scene3d_ids = (
+                {n.id for n in self.scene3d.nodes}
+                | {link.id for link in self.scene3d.links}
+                | {e.id for e in self.scene3d.effects}
+            )
+            if scene3d_ids & ids:
+                raise ValueError("scene3d IDs must not collide with 2D element IDs.")
+            if any(node.appear_at > self.duration + 1e-9 for node in self.scene3d.nodes):
+                raise ValueError("scene3d node appear_at must fit the scene duration.")
+            if any(
+                link.appear_at + link.draw_duration > self.duration + 1e-9
+                for link in self.scene3d.links
+            ):
+                raise ValueError("scene3d link timing must fit the scene duration.")
+            if any(effect.end > self.duration + 1e-9 for effect in self.scene3d.effects):
+                raise ValueError("scene3d effect timing must fit the scene duration.")
+            if any(shot.at > self.duration + 1e-9 for shot in self.scene3d.camera):
+                raise ValueError("scene3d camera shot must fit the scene duration.")
+            if any(
+                moment.at + moment.duration > self.duration + 1e-9
+                for moment in self.scene3d.moments
+            ):
+                raise ValueError("scene3d moment timing must fit the scene duration.")
         last_frame = (encoded_frames(self.duration) - 1) / FPS
         points_tweens_by_target = {}
         for tween in self.tweens:

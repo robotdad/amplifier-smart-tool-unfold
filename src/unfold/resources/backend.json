@@ -1,1 +1,1 @@
-{"private": true, "dependencies": {"hyperframes": "0.8.33", "gsap": "3.14.2"}}
+{"private": true, "dependencies": {"hyperframes": "0.8.33", "gsap": "3.14.2", "babylonjs": "9.28.0"}}

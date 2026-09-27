@@ -169,3 +169,34 @@ pixels and `line_height` as a font-size multiplier when needed. Defaults are 0 a
 1.22. Use editable text, not rasterized wordmarks; separate text elements can animate
 letters independently. Missing faces or characters are actionable limitations.
 For projects without a custom font, the existing system sans-serif remains available.
+
+## 3D layer (scene3d)
+
+An optional full-frame 3D layer renders beneath the existing 2D elements. Reach for it
+when depth, systems-as-objects, data flows between components, or full-frame atmosphere
+would explain the idea better than flat shapes — not as a default for every scene. Keep
+2D text elements for titles and captions; scene3d nodes carry only a short optional
+`label`, not paragraphs. A scene with `scene3d` may omit `elements` and `tweens` entirely;
+a scene without it still needs at least one of each, as before.
+
+Nodes are the objects of the system: give each a `shape`, `material` and `role`. The role
+palette carries meaning consistently across a scene — request/response/agent/tool/data/
+error/cache/neutral — so reuse the same role for the same kind of thing throughout, not
+just for visual variety. Links draw an arced connection between two nodes.
+
+Effects are the moving population and each preset MEANS something specific: `stream` is
+directional throughput from one node to another (requires `to_node`); `flock` is
+self-organising group behaviour around a node; `orbit` is a resident set or queue
+circling a node; `burst` is a single discrete event; `field` is ambient pressure or
+diffusion around a node. Choose the preset that matches what is actually happening, not
+the one that looks busiest. Effects are capped per preset (stream 2500, flock 400,
+orbit 1500, burst 600, field 3000) and 8000 total across a scene; heavy particle counts
+cost render time, so budget them like any other resource.
+
+`camera` is a chronological list of keyframes (`at`, `azimuth`, `elevation`, `distance`,
+`fov`, optional `target` node), starting at `at:0`; the runtime interpolates between
+them. Use `moments` sparingly, for a handful of emphasis beats (a shockwave on arrival, a
+flash on failure) — not on every event, or they stop reading as emphasis.
+
+scene3d renders are meaningfully slower than 2D-only scenes (software GL, roughly
+1.5 s/frame); budget fewer render/repair cycles when scene3d is present.

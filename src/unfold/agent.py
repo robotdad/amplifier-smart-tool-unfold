@@ -278,6 +278,9 @@ async def execute(owner):
             }
         )
         prompt = files("unfold").joinpath("resources/production.md").read_text()
+        # 3D-layer craft guidance distilled from the 3d-developer bench; the model decides per brief
+        # whether scene3d earns its place, so it always needs the guide.
+        prompt += "\n" + files("unfold").joinpath("resources/scene3d_guide.md").read_text()
         prompt += "\nSCENE SCHEMA:\n" + json.dumps(Scene.model_json_schema())
         prompt += "\nINPUT DATA:\n" + json.dumps(
             {key: owner.request.get(key) for key in ("brief", "feedback", "base_scene")}

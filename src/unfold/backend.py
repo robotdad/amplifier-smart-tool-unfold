@@ -109,6 +109,7 @@ class Backend:
         self.root = Path(root).expanduser().resolve()
         self.cli = self.root / "node_modules/hyperframes/bin/hyperframes.mjs"
         self.gsap = self.root / "node_modules/gsap/dist/gsap.min.js"
+        self.babylon = self.root / "node_modules/babylonjs/babylon.js"
 
     def _run_cli(self, arguments, timeout=240, reject_font_errors=False):
         options = {"reject_font_errors": True} if reject_font_errors else {}
@@ -116,7 +117,11 @@ class Backend:
 
     def doctor(self):
         versions = {}
-        for name, required in (("hyperframes", "0.8.33"), ("gsap", "3.14.2")):
+        for name, required in (
+            ("hyperframes", "0.8.33"),
+            ("gsap", "3.14.2"),
+            ("babylonjs", "9.28.0"),
+        ):
             try:
                 actual = json.loads(
                     (self.root / "node_modules" / name / "package.json").read_text()
@@ -337,6 +342,24 @@ class Backend:
                     "ease": move.ease,
                 }
                 lines.append(f'tl.to("#world",{json.dumps(props)},{move.at});')
+        if scene.scene3d is not None:
+            # First child of #root, before the (optional) #world wrapper / 2D elements.
+            scene3d_data = json.dumps(
+                {
+                    "width": width,
+                    "height": height,
+                    "duration": scene.duration,
+                    "fps": 30,
+                    "transparent": scene.background == "transparent",
+                    "scene3d": scene.scene3d.model_dump(),
+                },
+                separators=(",", ":"),
+            ).replace("<", "\\u003c")
+            body = (
+                f'<canvas id="scene3d" width="{width}" height="{height}" '
+                'style="position:absolute;left:0;top:0;width:100%;height:100%"></canvas>'
+                f'<script type="application/json" id="unfold-scene3d">{scene3d_data}</script>'
+            ) + body
         # The pinned renderer awaits document.fonts.ready before capture. Register
         # the populated timeline only after all required faces have loaded as well.
         font_gate = ""
@@ -347,9 +370,24 @@ class Backend:
             font_gate = "Promise.all([" + ",".join(loads) + "]).then(faces=>{if(faces.some(f=>!f.length))throw new Error('Required font failed to load');"
             font_gate_end = "}).catch(error=>{document.documentElement.dataset.fontError=String(error);throw error;});"
         font_policy = " font-src 'self' data:;" if font_manifest else ""
+        scene3d_scripts = (
+            '<script src="babylon.js"></script><script src="scene3d_runtime.js"></script>'
+            if scene.scene3d is not None
+            else ""
+        )
+        img_policy = "'self' data: blob:" if scene.scene3d is not None else "'self'"
+        # A scene3d-only scene may have no 2D tweens; an inert clock tween keeps the paused
+        # timeline as long as the composition so the renderer seeks the full duration.
+        timeline_registration = (
+            f"tl.to({{}},{{duration:{scene.duration}}},0);"
+            "(window.__unfoldScene3DReady||Promise.resolve())"
+            ".then(()=>{window.__timelines.unfold=tl;});"
+            if scene.scene3d is not None
+            else "window.__timelines.unfold=tl;"
+        )
         document = f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self';{font_policy} connect-src 'none'; object-src 'none'; frame-src 'none'">
-<title>{html.escape(scene.title)}</title><script src="gsap.min.js"></script><style>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src {img_policy};{font_policy} connect-src 'none'; object-src 'none'; frame-src 'none'">
+<title>{html.escape(scene.title)}</title><script src="gsap.min.js"></script>{scene3d_scripts}<style>
 *{{box-sizing:border-box}}html,body{{margin:0;width:100%;height:100%;overflow:hidden}}
 body{{font-family:system-ui,sans-serif}}#root{{position:relative;width:100%;height:100%;background:{scene.background};overflow:hidden}}
 .element{{position:absolute;line-height:1.22;transform-origin:center center;font-weight:550}}
@@ -359,10 +397,18 @@ body{{font-family:system-ui,sans-serif}}#root{{position:relative;width:100%;heig
 {body}</div><script>
 {font_gate}window.__timelines=window.__timelines||{{}};const tl=gsap.timeline({{paused:true}});
 {"".join(lines)}
-window.__timelines.unfold=tl;{font_gate_end}
+{timeline_registration}{font_gate_end}
 </script></body></html>'''
         (directory / "index.html").write_text(document)
         shutil.copyfile(self.gsap, directory / "gsap.min.js")
+        if scene.scene3d is not None:
+            from importlib.resources import files
+
+            shutil.copyfile(self.babylon, directory / "babylon.js")
+            shutil.copyfile(
+                str(files("unfold").joinpath("resources/scene3d_runtime.js")),
+                directory / "scene3d_runtime.js",
+            )
         write_json(directory / "scene.json", scene.model_dump())
         return self.source_hash(directory)
 
@@ -384,14 +430,13 @@ window.__timelines.unfold=tl;{font_gate_end}
             extra += identity + face["sha256"]
         if (Path(directory) / "fonts.json").exists():
             extra += digest(Path(directory) / "fonts.json")
+        names = ["index.html", "gsap.min.js", "scene.json"]
+        # Present only when scene3d was authored; absent for non-3D scenes (unchanged hash).
+        for name in ("babylon.js", "scene3d_runtime.js"):
+            if (Path(directory) / name).exists():
+                names.append(name)
         return hashlib.sha256(
-            (
-                extra
-                + "".join(
-                    digest(Path(directory) / name)
-                    for name in ("index.html", "gsap.min.js", "scene.json")
-                )
-            ).encode()
+            (extra + "".join(digest(Path(directory) / name) for name in names)).encode()
         ).hexdigest()
 
     def retained_resources(self, directory):
@@ -415,9 +460,12 @@ window.__timelines.unfold=tl;{font_gate_end}
         ) as temporary:
             resources = self.retained_resources(directory)
             self.author(scene, temporary, resources)
+            compare_names = ["index.html", "gsap.min.js"]
+            if scene.scene3d is not None:
+                compare_names += ["babylon.js", "scene3d_runtime.js"]
             if any(
                 digest(Path(temporary) / name) != digest(Path(directory) / name)
-                for name in ("index.html", "gsap.min.js")
+                for name in compare_names
             ):
                 raise UnfoldError(
                     "SOURCE_CHANGED",
@@ -433,6 +481,10 @@ window.__timelines.unfold=tl;{font_gate_end}
                     timeout=30)
             except UnfoldError as exc:
                 raise UnfoldError("FONT_LOAD_FAILED", "Required font failed browser validation: " + str(exc)) from None
+        # Software GL is ~1.5 s/frame with 2 workers; scale the budget with scene3d duration.
+        timeout = (
+            240 if scene.scene3d is None else max(240, int(120 + 75 * scene.duration))
+        )
         self._run_cli(
             [
                 "render",
@@ -448,7 +500,7 @@ window.__timelines.unfold=tl;{font_gate_end}
                 "--quality",
                 "standard",
             ],
-            timeout=240,
+            timeout=timeout,
             reject_font_errors=bool(fonts),
         )
         meta = self.probe(output, alpha=alpha)
