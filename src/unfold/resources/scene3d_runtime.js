@@ -195,6 +195,8 @@
     // --- post-processing: build once; afterwards only uniforms change (no shader rebuilds mid-render)
     const glow = new B.GlowLayer("glow", scene, { mainTextureSamples: 1, blurKernelSize: 64 }); glow.intensity = 0.75;
     for (const fx of effects) for (const m of fx.meshes) glow.addExcludedMesh(m);
+    // neon nodes already emit; the glow blur on top washes their face to white. Bloom supplies the halo.
+    for (const r of nodes) if (r.n.material === "neon") glow.addExcludedMesh(r.mesh);
     const pipe = new B.DefaultRenderingPipeline("pipe", true, scene, [camera]);
     pipe.samples = 4; pipe.fxaaEnabled = true;
     pipe.bloomEnabled = true; [pipe.bloomThreshold, pipe.bloomWeight, pipe.bloomKernel] = post.bloom; pipe.bloomScale = 0.5;
@@ -332,9 +334,11 @@
         const r = L.r;
         tmpV.set(r.mesh.position.x, r.mesh.position.y + r.n.size * 0.95 + 0.45, r.mesh.position.z);
         B.Vector3.ProjectToRef(tmpV, M.IdentityReadOnly, tm, vp, scr);
-        const vis = scr.z > 0 && scr.z < 1 ? smooth(r.n.appear_at + 0.3, r.n.appear_at + 0.9, t) : 0;
+        const lw = L.el.offsetWidth, lh = L.el.offsetHeight, lx = scr.x - lw / 2, ly = scr.y - lh;
+        const edge = Math.min(lx, W - (lx + lw), ly, H - scr.y);
+        const vis = scr.z > 0 && scr.z < 1 ? smooth(r.n.appear_at + 0.3, r.n.appear_at + 0.9, t) * Math.min(1, Math.max(0, edge / 40)) : 0;
         L.el.style.opacity = vis.toFixed(3);
-        L.el.style.transform = `translate(${(scr.x - L.el.offsetWidth / 2).toFixed(1)}px,${(scr.y - L.el.offsetHeight).toFixed(1)}px)`;
+        L.el.style.transform = `translate(${lx.toFixed(1)}px,${ly.toFixed(1)}px)`;
       }
 
       scene.render(true, true);
@@ -453,7 +457,7 @@
         m.subSurface.indexOfRefraction = 1.45; m.subSurface.tintColor = new C3(0.6 + col[0] * 0.4, 0.6 + col[1] * 0.4, 0.6 + col[2] * 0.4);
         m.clearCoat.isEnabled = true; m.clearCoat.intensity = 1; m.emissiveColor = c.scale(0.12); break;
       case "matte": m.albedoColor = c.scale(0.75); m.metallic = 0; m.roughness = 0.88; break;
-      case "neon": m.albedoColor = c.scale(0.08); m.metallic = 0; m.roughness = 0.35; m.emissiveColor = c.scale(1.0); break;
+      case "neon": m.albedoColor = c.scale(0.12); m.metallic = 0; m.roughness = 0.35; m.emissiveColor = new C3(c.r * c.r, c.g * c.g, c.b * c.b).scale(0.7); break;
       case "holo":
         m.albedoColor = c.scale(0.9); m.metallic = 0.55; m.roughness = 0.16; m.emissiveColor = c.scale(0.14);
         m.clearCoat.isEnabled = true; m.clearCoat.intensity = 0.8;
@@ -704,9 +708,9 @@
           float r = hash(band * 12.9898 + frame * 78.233);
           if (r < glitch * 0.45) uv.x += (hash(band + frame) - 0.5) * 0.09 * glitch;
         }
-        float ca = length(off) * 1.6 + glitch * 0.006;
+        vec2 cav = off * 0.15 + vec2(glitch * 0.006, 0.0);
         vec4 base = texture2D(textureSampler, uv);
-        vec3 col = vec3(texture2D(textureSampler, uv + vec2(ca, 0.0)).r, base.g, texture2D(textureSampler, uv - vec2(ca, 0.0)).b);
+        vec3 col = vec3(texture2D(textureSampler, uv + cav).r, base.g, texture2D(textureSampler, uv - cav).b);
         col += vec3(0.55, 0.75, 1.0) * ring * 0.22;
         col = mix(col, vec3(1.0), clamp(flash, 0.0, 1.0) * 0.8);
         gl_FragColor = vec4(col, max(base.a, clamp(flash + ring * 0.3, 0.0, 1.0)));
