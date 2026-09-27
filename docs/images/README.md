@@ -60,3 +60,21 @@ Vid supplies trim and caption plans; FFmpeg applies the dissolve, eased zoom and
 closing loop fade. Delivery is silent 1440×900 at 25fps, with a 960px GIF rendered
 through Outtake. The identity demo remains the separately approved secondary
 capability, unchanged by this edit.
+
+## scene3d demo
+
+`scene3d-pr-demo.mp4`, `scene3d-pr-demo.gif` and `scene3d-pr-demo-poster.png` are a 16-second
+explanation of the scene3d layer, made with the layer itself. The composition is a hand-authored
+`Scene` (2D captions plus a `scene3d` pipeline of nodes, links, particle streams, a flock
+simulation, camera shots and full-screen moments) that was validated by `unfold.models`, compiled
+by `Backend.author` and rendered by `Backend.render` from the feature branch, at native
+1920×1080 and 30fps with two render workers on software WebGL. No model authored or reviewed it,
+and it does not show a model-authored 3D request; that path is a follow-up.
+
+The same source was rendered a second time with one worker. Decoded frames were compared with
+FFmpeg `framemd5`: 480 of 480 frames are identical. The MP4 is the unmodified
+two-worker render. The 960px GIF is derived from it with an FFmpeg palette pass (12fps,
+96 colours, ordered dither); the poster is frame 465 (the closing pull-back). The scene script, both renders and the
+comparison report remain in ignored working storage.
+
+The cut was visually approved by the owner on 2026-09-27 before publication.
