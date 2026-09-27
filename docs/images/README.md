@@ -96,3 +96,22 @@ demo playing on the screen. The scene script, both renders and the comparison re
 ignored working storage.
 
 Added to the pull request at the owner's request on 2026-09-27.
+
+## scene3d video on moving objects demo
+
+`scene3d-video-objects-demo.mp4`, `scene3d-video-objects-demo.gif` and
+`scene3d-video-objects-demo-poster.png` are an 8-second demonstration of node `media`: the approved
+`scene3d-pr-demo.mp4` (from its 6-second mark, looping) plays as a video texture on three moving objects
+while the camera orbits: every face of a spinning cube (`surface: every_face`), a cube that keeps turning
+to face the camera (`surface: facing_camera`), and wrapped around a spinning sphere (`surface: wrap`). The
+composition is a hand-authored `Scene` validated by `unfold.models`, compiled by `Backend.author` (which
+decoded the clip into frame atlases at 15 fps, 512 px wide) and rendered by `Backend.render` from the
+feature branch at native 1920×1080 and 30fps with two render workers on software WebGL. No model authored
+or reviewed it.
+
+The same source was rendered a second time with one worker; FFmpeg `framemd5` found 240 of 240 decoded
+frames identical. The MP4 is the unmodified two-worker render. The 960px GIF is derived from it with an
+FFmpeg palette pass (12fps, 96 colours, ordered dither); the poster is frame 150. The scene script, both
+renders and the comparison report remain in ignored working storage.
+
+Added to the pull request at the owner's request on 2026-09-27.
