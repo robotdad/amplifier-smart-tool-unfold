@@ -187,7 +187,7 @@
       }
       if (frame) { frame.parent = pivot; frame.position.z = 0.06; }   // behind the picture (planes face -Z)
       const rec = { n: { id: sc.id, label: sc.label, appear_at: sc.appear_at, size: h * 0.6 },
-        sc, m, mesh: pivot, pic, pm, images, pages: null, base, col, playFrom: m.play_from };
+        sc, m, mesh: pivot, pic, frame, pm, images, pages: null, base, col, playFrom: m.play_from };
       byId.set(sc.id, rec);
       return rec;
     });
@@ -243,7 +243,9 @@
     for (const fx of effects) for (const m of fx.meshes) glow.addExcludedMesh(m);
     // neon nodes already emit; the glow blur on top washes their face to white. Bloom supplies the halo.
     for (const r of nodes) if (r.n.material === "neon") glow.addExcludedMesh(r.mesh);
-    for (const r of screens) glow.addExcludedMesh(r.pic);   // the picture shows true colour
+    // the picture shows true colour; its frame sits right behind it, so the glow blur from the
+    // frame's faint role emissive would wash over the picture
+    for (const r of screens) { glow.addExcludedMesh(r.pic); if (r.frame) glow.addExcludedMesh(r.frame); }
     const pipe = new B.DefaultRenderingPipeline("pipe", true, scene, [camera]);
     pipe.samples = 4; pipe.fxaaEnabled = true;
     pipe.bloomEnabled = true; [pipe.bloomThreshold, pipe.bloomWeight, pipe.bloomKernel] = post.bloom; pipe.bloomScale = 0.5;
