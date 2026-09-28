@@ -18,7 +18,43 @@ EXPORT_GUIDANCE = (
     "unchanged and copies directly to the final filename with weaker interruption guarantees."
 )
 
+IDENTITY_GUIDANCE = (
+    "Brief.identity is caller composition direction; identity_version selects immutable pack guidance/assets. "
+    "Both reach production separately: the caller string stays unchanged and library-owned selected_identity "
+    "records version_id, pack_id and guidance (null without a pack). New operations/revisions carry "
+    "identity_semantics=caller-plus-selected-pack-v1 and identity_provenance. "
+    "Revise/adopt resolves one selected version anew without concatenation or replacing caller direction. "
+    "Conflicting hard requirements must be reported as a limitation; no automatic prose-conflict detector is claimed. "
+    "Unmarked legacy pack-backed briefs have no recoverable separate caller channel: new continuations leave it "
+    "empty, record caller_identity=unavailable and source_revision_id, and do not reuse old pack text as caller rules. "
+    "Old records/retry outcomes are unchanged; unavailable provenance persists. Recovered prose may be supplied "
+    "in current feedback or an explicit new brief, not silently reconstructed. Unknown explicit semantics fail "
+    "IDENTITY_PROVENANCE_UNKNOWN before production. All disclosed text remains within the existing grant."
+)
+
 CAPABILITY_HELP = {
+    "fork-revision": (
+        "Continue an exact retained historical revision in a new project",
+        {"revision_id": "0123456789abcdef0123456789abcdef", "name": "Exact historical continuation",
+         "request_id": "fedcba9876543210fedcba9876543210"},
+        "Completed deterministic-copy receipt with new project_id, revision_id, artifact_ids, origin IDs and identical source/output hashes.",
+        "Same-library POSIX operation. Required stable 32-hex request_id; no model grant, renderer, "
+        "authoring, media probe or provider. Copies the complete verified generated source/resources "
+        "and 1–8 retained silent composition MP4s, never delivery-derived outputs. Original project "
+        "head/history remain untouched; normal revise can target the new project's current revision "
+        "and still enforces its stale-base guard. Brief/identity metadata are preserved exactly, "
+        "including missing legacy provenance. Old render/model review/usage are attributed origin "
+        "evidence, not new validation or spending. No grants, drafts, feedback queues or paid calls "
+        "are transferred. Shared pack/reference IDs remain same-library dependencies, not a portable "
+        "archive. Bounds: 1024 source files, 32 opened directories, 512 MiB per regular file, "
+        "1 GiB combined source+MP4, 1 MiB JSON/record metadata, 120-second cooperative copy allowance. "
+        "Paths, links (including hardlinks), special files and tampering are refused. Exact retry "
+        "returns the completed result without re-copying or rechecking now-missing originals; changed "
+        "arguments conflict. Publication and completed receipt are one transaction. Pending/incomplete "
+        "returns MUTATION_INCOMPLETE, never replay: read mutation-status for planned IDs, error and "
+        "retained owned staging. Partial files are not a published project. Concurrent equal requests "
+        "may observe that pending state; retry only to read the same receipt, not to restart it.",
+    ),
     "export-file": (
         "Copy retained media to an exact caller-owned filename",
         {"artifact_id": "ARTIFACT", "destination": "/existing/exports/The convergence loop.mp4",
@@ -307,7 +343,7 @@ CAPABILITY_HELP = {
             },
         },
         "Operation record; completed status identifies a new revision.",
-        "Model-backed; requires smart extra, provider credentials, backend and explicit disclosure grant. Earlier revision stays pinned. Resolve pack prerequisites first. Optional request_id protects exact retries; inspect failed operations before a new attempt.",
+        "Model-backed; requires smart extra, provider credentials, backend and explicit disclosure grant. Earlier revision stays pinned. Resolve pack prerequisites first. Optional request_id protects exact retries; inspect failed operations before a new attempt. " + IDENTITY_GUIDANCE,
     ),
 }
 
@@ -407,13 +443,13 @@ COMMAND_HELP = {
         "Animate a new explanation",
         "unfold create --brief brief.json --grant grant.json --request-id 0123456789abcdef0123456789abcdef",
         "Operation record; completed status includes project_id, revision_id, primary_artifact_id and outputs (artifact, revision, role, format, SHA-256, suggested_filename). Optional --export-to FILE / library create(export_to=...) adds a separate export result; failed copying never relabels successful generation.",
-        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Brief.output is {\"resolution\":\"1080p\"} (native 1920×1080, new-work default) or {\"resolution\":\"720p\"} (1280×720). Settings are retained per revision, not global. Durations support 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up; the default stays 20 seconds. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request. Optional --export-to FILE preflights before NEW generation and binds a separate copy receipt. Destination never enters the brief/provider payload. Keep the returned operation id and export.receipt_id. Changed destination conflicts; adding export to an old no-export request requires export-file instead. A pending copy after committed generation can resume deterministically; uncertain copying cannot replay. No export for uncommitted production. " + EXPORT_GUIDANCE,
+        "Model-backed. Requires smart extra, selected provider key, vision-capable model and renderer. Brief.output is {\"resolution\":\"1080p\"} (native 1920×1080, new-work default) or {\"resolution\":\"720p\"} (1280×720). Settings are retained per revision, not global. Durations support 1/30–60 seconds, rounded to the nearest 30-fps frame with ties up; the default stays 20 seconds. Brief context contains actual text, not paths to discover. Grant explicitly allows context/frame disclosure and bounds work. Exact retries with the same 32 lowercase hexadecimal request ID do not spend again; inspect uncertain outcomes before a fresh request. Optional --export-to FILE preflights before NEW generation and binds a separate copy receipt. Destination never enters the brief/provider payload. Keep the returned operation id and export.receipt_id. Changed destination conflicts; adding export to an old no-export request requires export-file instead. A pending copy after committed generation can resume deterministically; uncertain copying cannot replay. No export for uncommitted production. " + EXPORT_GUIDANCE + " " + IDENTITY_GUIDANCE,
     ),
     "revise": (
         "Apply a change while retaining the earlier composition",
         'unfold revise REVISION --feedback "Keep the dot at the line tip" --grant grant.json',
         "Operation record; completed status identifies the new revision.",
-        "Model-backed with the same prerequisites/disclosure as create. Base must be current and intact. Optional --request-id protects exact retries. A stale base requires reviewing the latest revision and adapting feedback, not silently retargeting it.",
+        "Model-backed with the same prerequisites/disclosure as create. Base must be current and intact. Optional --request-id protects exact retries. A stale base requires reviewing the latest revision and adapting feedback, not silently retargeting it. " + IDENTITY_GUIDANCE,
     ),
     "dashboard": (
         "Open a local review workspace",

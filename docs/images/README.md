@@ -60,3 +60,58 @@ Vid supplies trim and caption plans; FFmpeg applies the dissolve, eased zoom and
 closing loop fade. Delivery is silent 1440×900 at 25fps, with a 960px GIF rendered
 through Outtake. The identity demo remains the separately approved secondary
 capability, unchanged by this edit.
+
+## scene3d demo
+
+`scene3d-pr-demo.mp4`, `scene3d-pr-demo.gif` and `scene3d-pr-demo-poster.png` are a 16-second
+explanation of the scene3d layer, made with the layer itself. The composition is a hand-authored
+`Scene` (2D captions plus a `scene3d` pipeline of nodes, links, particle streams, a flock
+simulation, camera shots and full-screen moments) that was validated by `unfold.models`, compiled
+by `Backend.author` and rendered by `Backend.render` from the feature branch, at native
+1920×1080 and 30fps with two render workers on software WebGL. No model authored or reviewed it,
+and it does not show a model-authored 3D request; that path is a follow-up.
+
+The same source was rendered a second time with one worker. Decoded frames were compared with
+FFmpeg `framemd5`: 480 of 480 frames are identical. The MP4 is the unmodified
+two-worker render. The 960px GIF is derived from it with an FFmpeg palette pass (12fps,
+96 colours, ordered dither); the poster is frame 465 (the closing pull-back). The scene script, both renders and the
+comparison report remain in ignored working storage.
+
+The cut was visually approved by the owner on 2026-09-27 before publication.
+
+## scene3d video screens demo
+
+`scene3d-video-screens-demo.mp4`, `scene3d-video-screens-demo.gif` and
+`scene3d-video-screens-demo-poster.png` are a 16-second explanation of scene3d video screens, made
+with the feature itself. The composition is a hand-authored `Scene` whose screen plays the approved
+`scene3d-pr-demo.mp4` (seconds 6 to 12.6) as a library video asset. It was validated by
+`unfold.models`, compiled by `Backend.author` (which decoded the clip into frame atlases at 15 fps,
+512 px wide) and rendered by `Backend.render` from the feature branch at native 1920×1080 and 30fps
+with two render workers on software WebGL. No model authored or reviewed it.
+
+The same source was rendered a second time with one worker; FFmpeg `framemd5` found 480 of 480
+decoded frames identical. The MP4 is the unmodified two-worker render. The 960px GIF is derived from
+it with an FFmpeg palette pass (12fps, 96 colours, ordered dither); the poster is frame 345, with the
+demo playing on the screen. The scene script, both renders and the comparison report remain in
+ignored working storage.
+
+Added to the pull request at the owner's request on 2026-09-27.
+
+## scene3d video on moving objects demo
+
+`scene3d-video-objects-demo.mp4`, `scene3d-video-objects-demo.gif` and
+`scene3d-video-objects-demo-poster.png` are an 8-second demonstration of node `media`: the approved
+`scene3d-pr-demo.mp4` (from its 6-second mark, looping) plays as a video texture on three moving objects
+while the camera orbits: every face of a spinning cube (`surface: every_face`), a cube that keeps turning
+to face the camera (`surface: facing_camera`), and wrapped around a spinning sphere (`surface: wrap`). The
+composition is a hand-authored `Scene` validated by `unfold.models`, compiled by `Backend.author` (which
+decoded the clip into frame atlases at 15 fps, 512 px wide) and rendered by `Backend.render` from the
+feature branch at native 1920×1080 and 30fps with two render workers on software WebGL. No model authored
+or reviewed it.
+
+The same source was rendered a second time with one worker; FFmpeg `framemd5` found 240 of 240 decoded
+frames identical. The MP4 is the unmodified two-worker render. The 960px GIF is derived from it with an
+FFmpeg palette pass (12fps, 96 colours, ordered dither); the poster is frame 150. The scene script, both
+renders and the comparison report remain in ignored working storage.
+
+Added to the pull request at the owner's request on 2026-09-27.

@@ -11,6 +11,7 @@ from .processes import owned_process, stop_tree
 from .store import digest, uid
 
 ACTIVE = {"running", "cancelling"}
+IDENTITY_SEMANTICS = "caller-plus-selected-pack-v1"
 
 
 class Recovery:
@@ -285,6 +286,12 @@ class Recovery:
             "artifacts": [artifact["id"]],
             "operation_id": operation_id,
         }
+        # Identity provenance is library-owned, never a worker's completion claim.
+        # Unmarked old operations remain unmarked; do not invent lost caller text.
+        for key in ("identity_semantics", "identity_provenance", "selected_identity"):
+            revision.pop(key, None)
+            if key in operation:
+                revision[key] = operation[key]
         project["current_revision"] = revision_id
         project["revisions"].append(revision_id)
         operation.update(status="completed", revision_id=revision_id,

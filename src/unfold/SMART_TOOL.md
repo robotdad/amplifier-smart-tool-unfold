@@ -44,6 +44,80 @@ The authoring profile supports text, cards, paths, polygons, circles, arcs, imag
 assets, stroke drawing, equal-point-count path morphing and camera motion. An embedded Amplifier Agent creates and
 refines compositions; deterministic operations manage assets, packs and delivery.
 
+For 3D video screens and video-textured nodes, include imported video assets in the
+selected identity. Only asset names, roles and IDs go into the authoring asset list;
+local paths and video bytes do not. Video is sampled at 15 fps and 512 px wide.
+Each surface may require at most 60 source seconds after its media start, accounting
+for playback rate; looping requires the full remaining clip. Frames must be at most
+4096 px high at that sampling width. Atlas pages fit within 4096 × 4096 and the scene
+may allocate at most 134217728 atlas pixels across all video surfaces, including
+padding. Requests exceeding these bounds fail with `RESOURCE_LIMIT`, not silent
+truncation, cropping or quality reduction. Short non-looped clips hold their last frame.
+
+3D style controls are optional and independent. Node `entrance` is `"pop"` or
+`"none"`; screen `entrance` is `"scale"` or `"none"`. None means hidden before
+`appear_at` and full size at that time, including frame zero. Node `idle_motion`
+is `"bob"` (legacy bob/tumble/ring motion) or `"none"`; explicit spin and
+camera-facing media remain independent. Node `color:"#RRGGBB"` selects an sRGB
+material tint independently of semantic role; lighting/material response still
+affect its rendered colour, and video pixels are not tinted.
+`floor_grid:false` removes the grid from an existing environment floor.
+`post_overrides:{"bloom_weight":0,"glow_intensity":0}` disables both halo passes;
+allowed ranges are 0–1 and 0–2 respectively. This does not remove material emission,
+particles, label shadows or the preset's other post effects. Rings remain separately
+selectable with `ring:false`. Omitted/null controls preserve legacy behavior.
+
+`scene3d.background:"transparent"` makes only the 3D layer's backdrop transparent.
+It preserves `Scene.background` and existing 2D properties, showing that CSS
+background through the canvas while 3D objects remain beneath 2D graphics.
+Environment lighting/reflections remain on objects; sky, stars and floor are
+omitted (including a requested floor). Null/omitted or `"environment"` retains
+the legacy backdrop, except that whole-scene `Scene.background:"transparent"`
+still takes precedence. Effects and translucent materials can change pixels in
+their coverage; this is not an unlit mode, a material/UV fix, or MP4 alpha delivery.
+For this explicit transparent-layer setting, normal rendering acquires straight-alpha
+RGBA from the generated 3D framebuffer using the pinned software browser and encodes
+PNG frames in the library owner. The final stage uses ordinary images, not a visible
+WebGL canvas, beneath the original 2D DOM and retains its existing capture policy.
+Projected 3D labels are retained as bounded typed text/style/position/opacity records;
+image and labels update together in an awaited seek. Failed decoding or label-layout
+drift stops capture rather than accepting a stale frame. No prior-output cache is used.
+Direct author-HTML previews still use WebGL and are not the final preservation surface.
+
+Staging is limited to 512 mebipixels (frame count × native width × native height),
+about 8.6 seconds at 1080p or 19.4 seconds at 720p/30fps; over-budget requests fail
+`RESOURCE_LIMIT`, never silently trim or downscale. PNG files have a 2 GiB + 32 MiB
+allowance and typed label metadata an 8 MiB allowance. Existing retained source assets
+are additional; leave local disk headroom. Acquisition and final capture share the
+render deadline, and owned temporary staging is cleaned up. The presenter decodes
+sequentially; browser-internal caching and transient raw/encoded copies still use memory.
+
+Unchanged source/layout and lossless uncovered-pixel checks establish different parts
+of preservation. Adding content can change output pixels elsewhere through the normal
+lossy JPEG-capture/H.264 pipeline; this is separate from exact decoded-frame repeatability
+of the **same** revision on the **same** pinned runtime. Inspect actual delivered
+appearance and legibility; do not infer cross-revision encoded equality from source
+preservation, or excuse failed same-revision repeatability as ordinary encoding loss.
+
+Compatibility: new schema normalization preserves legacy visual defaults, not old
+3D runtime bytes. Existing 3D revisions must be rendered with their matching older
+installed version; a new runtime can legitimately produce `SOURCE_CHANGED` during
+the executable-source check. No automatic migration or bypass is provided. Keep
+historical outputs/source and use an explicitly new revision for new controls.
+2D-only compositions do not load this runtime and keep their existing behavior.
+
+3D renders explicitly select HyperFrames' software GPU (SwiftShader) and screenshot
+capture rather than auto-selecting host hardware. This code-owned policy applies
+to ordinary 3D MP4 and alpha rendering. The explicit transparent-layer path instead
+reads its software framebuffer directly, then presents images/labels with the original
+2D capture policy as above. 2D-only capture selection is unchanged. Ambient renderer
+overrides are not passed through. Software capture can be substantially slower
+than hardware (about five times in one matched local capture test); allow for it
+within existing operation budgets. Repeatability checks apply to the same pinned
+renderer, browser and software-runtime environment, not arbitrary platforms,
+CPUs, browser revisions or GPU drivers. Software and previous hardware outputs
+can differ in pixels; unchanged source does not imply cross-backend equality.
+
 Requested durations are rounded to the nearest whole 30-fps frame, with exact
 half-frame ties rounded up, and stored as frame count / 30. A 2-second bumper is
 60 frames; 2.5 seconds is 75; 2.52 seconds becomes 76 frames (2.533333… seconds).
@@ -451,6 +525,90 @@ receipt = tool.import_pack(exported["path"], expected_sha256=checked["sha256"])
   imports return the previous receipt; conflicting version claims fail.
   `import_pack(..., conflict="copy")` explicitly imports a separate variation.
   Original absolute paths, credentials and library caches are excluded from ZIPs.
+
+### Caller direction and selected identity
+
+`Brief.identity` is composition-specific caller direction; `identity_version`
+selects an immutable reusable pack. Both may be supplied:
+
+```python
+brief = Brief(
+    title="Exhibition", intent="Show how routes connect",
+    identity="Bright architectural maquette; no particles, bloom or glow.",
+    identity_version=pack["current_version"],
+)
+```
+
+For new operations, the caller string is retained unchanged. Pack selection never
+overwrites or appends to it. Production receives a separate library-owned
+`selected_identity={version_id, pack_id, guidance}` (null without a selection).
+The operation and completed revision retain that snapshot with
+`identity_semantics:"caller-plus-selected-pack-v1"` and `identity_provenance`.
+These are result/request metadata, not new caller-writable Brief fields.
+Each new revision resolves the chosen version once; adoption changes the selected
+version/snapshot, not caller direction. Old pack rules are not concatenated.
+Required pack rules and explicit caller constraints must both be met; conflicting
+hard requirements must be reported as a limitation, not silently resolved by dropping
+either input. No deterministic prose-conflict detector or model compliance is claimed.
+Both channels count against the existing provider disclosure allowance.
+
+Historical pack-backed briefs did not distinguish caller text from substituted
+pack guidance. On a NEW continuation, an unmarked pack-backed base gets an empty
+caller channel plus `identity_provenance.caller_identity:"unavailable"` and its
+source revision ID. The ambiguous old field is not reused as caller direction;
+the selected pack is resolved afresh. That unknown status remains visible on
+later revisions. No lost caller prose is guessed or old record rewritten. Supply
+verified recovered direction in current feedback for that operation, or explicitly
+create a new brief; feedback alone does not restore the canonical historical brief.
+Unmarked caller-only bases retain their text. Unknown explicit semantics or invalid
+modern provenance fail with `IDENTITY_PROVENANCE_UNKNOWN`, before production.
+Exact old request retries retain their original comparisons/outcomes and do not
+relaunch or rewrite history, even when current prerequisites are unavailable.
+
+## Continue a historical revision without resetting its project
+
+Use `fork_revision(revision_id, name, *, request_id)` to byte-copy an intact retained
+revision into a **new project**. It works on an older revision even when the original
+project has advanced. The original head/history never move; ordinary `revise` on the
+returned new revision still needs a fresh bounded grant and enforces stale-base rules.
+
+```python
+fork = tool.fork_revision(
+    historical_revision_id,
+    "Exact historical continuation",
+    request_id="fedcba9876543210fedcba9876543210",
+)
+# Inspect fork["revision_id"] and its artifacts before authorized creative work.
+```
+
+CLI: `unfold call fork-revision --args fork.json`. MCP: `unfold_fork_revision`.
+Manifest classifies the operation as deterministic; it neither initializes intelligence
+nor calls author/render/media probing. It copies generated source/resources and the
+revision's retained silent composition MP4s exactly, not flattened media in place of
+editable source. New records name the original project/revision/artifacts, verified
+source/file hashes and a deterministic-copy receipt. Original render metadata, checks,
+model review and usage are attributed under inherited evidence—not newly performed
+validation or new charges. No review grants, drafts, feedback queues or pending work
+are copied. Exact brief/identity fields and legacy field absence are retained.
+
+Same-library only, currently POSIX no-follow descriptor support required. Selected
+pack/reference IDs remain same-library references and are disclosed, not exported as a
+portable project archive. Copies have independent regular files, no links. Limits:
+1024 source files, 32 opened directories, 512 MiB per file, 1 GiB combined source/MP4,
+1 MiB JSON/record metadata, 1–8 composition MP4s, 120-second cooperative copy allowance.
+Delivery-derived artifacts, unsafe paths, links/special files, missing/changed material
+and unsupported generated-source entries are refused, not silently omitted.
+
+Keep the required exact `request_id`. Equal retries return the same committed IDs,
+even if the origin later becomes unavailable. Different arguments conflict. Project,
+revision, artifacts and completed receipt publish atomically after checked staging.
+Interrupted/pending requests fail `MUTATION_INCOMPLETE` rather than copying again;
+`mutation_status(request_id)` exposes planned IDs and retained partial staging.
+Concurrent equal calls can observe pending work. A partial copy is not a valid new
+project, and a new request ID is not an automatic recovery from an uncertain outcome.
+The private-local-store boundary does not defend against an unrestricted same-user
+actor replacing files after final checks. No source is executed during the copy;
+subsequent rendering still performs its normal runtime/source checks.
 
 ## Footage, audio and output
 

@@ -15,14 +15,15 @@ from .backend import Backend
 from .credentials import CREDENTIALS, credential, worker_environment
 from .delivery import Delivery
 from .exports import Exports, suggested_filename
+from .forks import Forks
 from .models import Brief, Grant, UnfoldError, retained_brief, retry_brief_payload
 from .processes import process_identity, stop_worker
-from .recovery import Recovery
+from .recovery import IDENTITY_SEMANTICS, Recovery
 from .review import Review
 from .store import Store, digest, uid, write_json
 
 
-class Unfold(Recovery, Review, Assets, Delivery, Exports):
+class Unfold(Recovery, Review, Assets, Delivery, Exports, Forks):
     def __init__(self, library=None, backend=None):
         self.store = Store(library or Path.home() / ".local/share/unfold")
         self.backend = Backend(backend or Path.home() / ".local/share/unfold-backend")
@@ -715,7 +716,7 @@ class Unfold(Recovery, Review, Assets, Delivery, Exports):
                     # without rewriting the record or requiring today's prerequisites.
                     prior = {key: previous.get(key) for key in input_payload}
                     candidate = input_payload
-                    if brief.identity_version:
+                    if brief.identity_version and "identity_semantics" not in previous:
                         prior = {**prior, "brief": {
                             k: v for k, v in prior["brief"].items() if k != "identity"
                         }}
@@ -728,6 +729,44 @@ class Unfold(Recovery, Review, Assets, Delivery, Exports):
                         )
                 # Recovery is not conditional on today's renderer or asset availability.
                 return previous
+        # Retry comparison above uses the original admission representation, including
+        # old derived briefs. Only NEW work normalizes the historical identity seam.
+        identity_provenance = {"caller_identity": "supplied"}
+        if base:
+            semantics = base.get("identity_semantics")
+            if semantics == IDENTITY_SEMANTICS:
+                provenance = base.get("identity_provenance")
+                if (not isinstance(provenance, dict) or provenance.get("caller_identity")
+                        not in {"supplied", "legacy_caller_only", "unavailable"}):
+                    raise UnfoldError("IDENTITY_PROVENANCE_UNKNOWN", "Retained caller identity provenance is missing or invalid.")
+                if provenance["caller_identity"] == "unavailable" and (
+                    brief.identity or provenance.get("reason") != "legacy_pack_brief_not_separated"
+                    or not isinstance(provenance.get("source_revision_id"), str)
+                    or not provenance["source_revision_id"]
+                ):
+                    raise UnfoldError("IDENTITY_PROVENANCE_UNKNOWN", "Unavailable caller identity needs its retained origin and an empty caller channel.")
+                identity_provenance = dict(provenance)
+            elif "identity_semantics" in base:
+                raise UnfoldError(
+                    "IDENTITY_PROVENANCE_UNKNOWN", "Unsupported retained identity semantics.",
+                    "Use the matching implementation or supply an explicit new brief; no direction was guessed.",
+                )
+            elif base["brief"].get("identity_version"):
+                # Historical pack-backed briefs stored effective pack guidance in
+                # identity, without a separately recoverable caller channel. Do not
+                # guess from string equality/JSON shape, or carry pack A as caller
+                # direction into adoption of B. Preserve the original record untouched.
+                brief = brief.model_copy(update={"identity": ""})
+                identity_provenance = {
+                    "caller_identity": "unavailable",
+                    "source_revision_id": base["id"],
+                    "reason": "legacy_pack_brief_not_separated",
+                    "limitation": "The legacy pack-backed brief did not retain caller identity separately. "
+                                  "Its identity field is not reused as caller direction; original caller text is unknown.",
+                }
+            else:
+                identity_provenance = {"caller_identity": "legacy_caller_only", "source_revision_id": base["id"]}
+        selected_identity = None
         if brief.identity_version:
             identity = self.store.get(brief.identity_version, "pack_version")
             if identity["prerequisites"]:
@@ -739,7 +778,11 @@ class Unfold(Recovery, Review, Assets, Delivery, Exports):
                 asset = self.asset(asset_id)
                 if asset["integrity"] != "intact" or asset["sha256"] != expected:
                     raise UnfoldError("MATERIAL_CHANGED", "Identity assets changed or missing.")
-            brief = brief.model_copy(update={"identity": json.dumps(identity["guidance"])})
+            selected_identity = {
+                "version_id": identity["id"],
+                "pack_id": identity["pack_id"],
+                "guidance": identity["guidance"],
+            }
         if not (grant.allow_context and grant.allow_frames and grant.vision):
             raise UnfoldError(
                 "DISCLOSURE_REQUIRED",
@@ -754,6 +797,9 @@ class Unfold(Recovery, Review, Assets, Delivery, Exports):
             "base": base["id"] if base else None,
             "feedback": feedback,
             "feedback_target": target,
+            "identity_semantics": IDENTITY_SEMANTICS,
+            "identity_provenance": identity_provenance,
+            "selected_identity": selected_identity,
         }
         request_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         with self.store.connect() as db:
@@ -813,10 +859,10 @@ class Unfold(Recovery, Review, Assets, Delivery, Exports):
         try:
             resources = {}
             if brief.identity_version:
-                version = self.store.get(brief.identity_version, "pack_version")
+                version = identity  # same checked immutable version as selected_identity
                 for asset_id in version["assets"]:
                     asset = self.asset(asset_id)
-                    if asset["role"] in {"image", "font"}:
+                    if asset["role"] in {"image", "font", "video"}:
                         resources[asset_id] = {
                             "path": asset["path"],
                             "sha256": asset["sha256"],
@@ -829,7 +875,7 @@ class Unfold(Recovery, Review, Assets, Delivery, Exports):
                             from .fonts import inspect_font
 
                             resources[asset_id]["font"] = inspect_font(asset["path"])
-            # Expose retained faces when continuing a scene without a selected pack.
+            # Expose retained fonts/videos when continuing without a selected pack.
             # Explicit identity adoption uses the new pack's selection.
             if base and base.get("identity_version") == brief.identity_version:
                 for i, resource in self.backend.retained_resources(base["source_path"]).items():
