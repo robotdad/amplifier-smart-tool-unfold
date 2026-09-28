@@ -38,7 +38,7 @@
   function hashString(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
-  // Role palette: colour carries category, never raw RGB from the model.
+  // Legacy role palette; a validated optional node colour can override its material tint.
   const ROLE = {
     request: [0.30, 0.62, 1.00], response: [0.34, 1.00, 0.62], agent: [0.72, 0.52, 1.00],
     tool: [1.00, 0.56, 0.20], data: [0.22, 0.95, 0.95], error: [1.00, 0.24, 0.30],
@@ -88,6 +88,9 @@
     const env = ENV[S.environment] || ENV.studio_dark;
     S.__lightInk = env.ink === "dark";
     const post = POST[S.post] || POST.cinematic;
+    const overrides = S.post_overrides || {};
+    const bloomWeight = overrides.bloom_weight ?? post.bloom[1];
+    const glowIntensity = overrides.glow_intensity ?? 0.75;
     const glOk = typeof B.Engine.isSupported === "function" ? B.Engine.isSupported() : !!B.Engine.IsSupported;
     if (!glOk) throw new Error("WebGL is unavailable");
 
@@ -151,9 +154,12 @@
     const byId = new Map();
     const rngFor = (id) => mulberry32((hashString(id) ^ (S.seed >>> 0)) >>> 0);
     const nodes = S.nodes.map((n, i) => {
-      const col = ROLE[n.role] || ROLE.neutral;
+      const col = n.color ? B.Color3.FromHexString(n.color).toLinearSpace().asArray() : (ROLE[n.role] || ROLE.neutral);
       const mesh = makeShape(B, scene, n.shape, n.size, "n_" + n.id);
       mesh.material = makeMaterial(B, scene, n.material, col, "m_" + n.id);
+      // Fixed-colour material presets retain their physical parameters, not their old hue.
+      if (n.color && ["chrome", "gold", "obsidian"].includes(n.material))
+        mesh.material.albedoColor = new C3(...col);
       let video = null, vmesh = null, facing = false;
       if (n.media) {   // a library video on the node's surface, following the node as it moves
         const surface = n.media.surface === "auto" ? MEDIA_AUTO[n.shape] : n.media.surface;
@@ -233,7 +239,7 @@
         fm.emissiveColor = new C3(col[0] * 0.9, col[1] * 0.9, col[2] * 0.9); frame.material = fm;
       }
       if (frame) { frame.parent = pivot; frame.position.z = 0.06; }   // behind the picture (planes face -Z)
-      const rec = { n: { id: sc.id, label: sc.label, appear_at: sc.appear_at, size: h * 0.6 },
+      const rec = { n: { id: sc.id, label: sc.label, appear_at: sc.appear_at, entrance: sc.entrance, size: h * 0.6 },
         sc, m, mesh: pivot, pic, frame, pm, images, pages: null, base, col, playFrom: m.play_from,
         id: sc.id, rate: sc.rate, loop: sc.loop };
       videoSurfaces.push(rec);
@@ -247,15 +253,20 @@
       const ground = B.MeshBuilder.CreateGround("floor", { width: 500, height: 500, subdivisions: 1 }, scene);
       ground.position.y = floorY;
       const gm = new B.PBRMaterial("floorm", scene);
-      const grid = new B.DynamicTexture("grid", { width: 1024, height: 1024 }, scene, true);
-      const g = grid.getContext();
-      g.fillStyle = "#" + env.floor.map((c) => Math.round(Math.pow(c, 1 / 2.2) * 255).toString(16).padStart(2, "0")).join("");
-      g.fillRect(0, 0, 1024, 1024);
-      g.strokeStyle = env.grid; g.globalAlpha = 0.55; g.lineWidth = 2;
-      for (let x = 0; x <= 1024; x += 64) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 1024); g.stroke(); g.beginPath(); g.moveTo(0, x); g.lineTo(1024, x); g.stroke(); }
-      grid.update(); grid.uScale = grid.vScale = 40; grid.anisotropicFilteringLevel = 8;
-      gm.albedoTexture = grid; gm.metallic = 0.02; gm.roughness = 0.7; gm.environmentIntensity = 0.35;
-      if (env.gridGlow) { gm.emissiveTexture = grid; gm.emissiveColor = new C3(0.9, 0.9, 0.9); }
+      if (S.floor_grid === false) {
+        gm.albedoColor = new C3(...env.floor);
+        gm.metallic = 0.02; gm.roughness = 0.7; gm.environmentIntensity = 0.35;
+      } else {
+        const grid = new B.DynamicTexture("grid", { width: 1024, height: 1024 }, scene, true);
+        const g = grid.getContext();
+        g.fillStyle = "#" + env.floor.map((c) => Math.round(Math.pow(c, 1 / 2.2) * 255).toString(16).padStart(2, "0")).join("");
+        g.fillRect(0, 0, 1024, 1024);
+        g.strokeStyle = env.grid; g.globalAlpha = 0.55; g.lineWidth = 2;
+        for (let x = 0; x <= 1024; x += 64) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 1024); g.stroke(); g.beginPath(); g.moveTo(0, x); g.lineTo(1024, x); g.stroke(); }
+        grid.update(); grid.uScale = grid.vScale = 40; grid.anisotropicFilteringLevel = 8;
+        gm.albedoTexture = grid; gm.metallic = 0.02; gm.roughness = 0.7; gm.environmentIntensity = 0.35;
+        if (env.gridGlow) { gm.emissiveTexture = grid; gm.emissiveColor = new C3(0.9, 0.9, 0.9); }
+      }
       ground.material = gm; ground.receiveShadows = true;
     }
 
@@ -288,17 +299,20 @@
     const effects = S.effects.map((e) => makeEffect(B, scene, e, byId, rngFor, S));
 
     // --- post-processing: build once; afterwards only uniforms change (no shader rebuilds mid-render)
-    const glow = new B.GlowLayer("glow", scene, { mainTextureSamples: 1, blurKernelSize: 64 }); glow.intensity = 0.75;
-    for (const fx of effects) for (const m of fx.meshes) glow.addExcludedMesh(m);
-    // neon nodes already emit; the glow blur on top washes their face to white. Bloom supplies the halo.
-    for (const r of nodes) if (r.n.material === "neon") glow.addExcludedMesh(r.mesh);
-    // the picture shows true colour; its frame sits right behind it, so the glow blur from the
-    // frame's faint role emissive would wash over the picture
-    for (const r of screens) { glow.addExcludedMesh(r.pic); if (r.frame) glow.addExcludedMesh(r.frame); }
-    for (const r of videoSurfaces) if (!r.sc) glow.addExcludedMesh(r.vmesh);   // video nodes: true colour
+    if (glowIntensity > 0) {
+      const glow = new B.GlowLayer("glow", scene, { mainTextureSamples: 1, blurKernelSize: 64 }); glow.intensity = glowIntensity;
+      for (const fx of effects) for (const m of fx.meshes) glow.addExcludedMesh(m);
+      // neon nodes already emit; the glow blur on top washes their face to white. Bloom supplies the halo.
+      for (const r of nodes) if (r.n.material === "neon") glow.addExcludedMesh(r.mesh);
+      // the picture shows true colour; its frame sits right behind it, so the glow blur from the
+      // frame's faint role emissive would wash over the picture
+      for (const r of screens) { glow.addExcludedMesh(r.pic); if (r.frame) glow.addExcludedMesh(r.frame); }
+      for (const r of videoSurfaces) if (!r.sc) glow.addExcludedMesh(r.vmesh);   // video nodes: true colour
+    }
     const pipe = new B.DefaultRenderingPipeline("pipe", true, scene, [camera]);
     pipe.samples = 4; pipe.fxaaEnabled = true;
-    pipe.bloomEnabled = true; [pipe.bloomThreshold, pipe.bloomWeight, pipe.bloomKernel] = post.bloom; pipe.bloomScale = 0.5;
+    pipe.bloomEnabled = bloomWeight > 0;
+    [pipe.bloomThreshold, pipe.bloomWeight, pipe.bloomKernel] = [post.bloom[0], bloomWeight, post.bloom[2]]; pipe.bloomScale = 0.5;
     pipe.imageProcessingEnabled = true;
     const ip = pipe.imageProcessing;
     ip.toneMappingEnabled = true; ip.toneMappingType = B.ImageProcessingConfiguration.TONEMAPPING_ACES;
@@ -384,11 +398,13 @@
       camera.radius = c[5];
       camera.fov = c[6] * Math.PI / 180;
       camera.getViewMatrix(true);
+      // Projection consumers (including shockwaves) must see this frame's camera.
+      scene.updateTransformMatrix(true);
 
       // screens: ease in, then show the atlas tile for scene time t
       for (const r of screens) {
         const a = clamp((t - r.sc.appear_at) / 0.6, 0, 1);
-        r.mesh.scaling.setAll(Math.max(0.0001, a * a * (3 - 2 * a)));
+        r.mesh.scaling.setAll(r.sc.entrance === "none" ? (t >= r.sc.appear_at ? 1 : 0) : Math.max(0.0001, a * a * (3 - 2 * a)));
         const bob = r.sc.frame === "floating" ? Math.sin(t * 0.8) * 0.05 : 0;
         r.mesh.position.set(r.base.x, r.base.y + bob, r.base.z);
         showFrame(r, t);
@@ -398,8 +414,9 @@
       // nodes: pop-in with overshoot, gentle float, slow spin
       for (const r of nodes) {
         const a = backOut(clamp((t - r.n.appear_at) / 0.7, 0, 1));
-        const s = Math.max(0.0001, a);
-        const bob = r.n.shape === "platform" ? 0 : Math.sin(t * 0.9 + r.phase) * 0.06 * r.n.size;
+        const s = r.n.entrance === "none" ? (t >= r.n.appear_at ? 1 : 0) : Math.max(0.0001, a);
+        const idle = r.n.idle_motion !== "none";
+        const bob = !idle || r.n.shape === "platform" ? 0 : Math.sin(t * 0.9 + r.phase) * 0.06 * r.n.size;
         r.mesh.position.set(r.base.x, r.base.y + bob, r.base.z);
         r.mesh.scaling.setAll(s);
         if (r.facing) {   // turn about the vertical axis so the clip side always faces the camera
@@ -407,13 +424,16 @@
           r.mesh.rotation.set(0, Math.atan2(-dx, -dz), 0);
         } else if (r.n.spin != null) {   // explicit spin about the vertical axis, any shape
           r.mesh.rotation.set(0, t * r.n.spin * Math.PI / 180, 0);   // starts face-on: spin 0 = still, facing the default camera
-        } else if (r.n.shape === "cube" || r.n.shape === "icosahedron" || r.n.shape === "torus") {
+        } else if (idle && (r.n.shape === "cube" || r.n.shape === "icosahedron" || r.n.shape === "torus")) {
           r.mesh.rotation.set(0.35 * Math.sin(t * 0.4 + r.phase), t * 0.35 + r.phase, 0.2 * Math.cos(t * 0.3 + r.phase));
+        } else if (!idle) {
+          r.mesh.rotation.set(0, 0, 0);
         }
         if (r.ring) {
           r.ring.position.copyFrom(r.mesh.position);
-          r.ring.scaling.setAll(Math.max(0.0001, smooth(r.n.appear_at + 0.2, r.n.appear_at + 0.9, t)));
-          r.ring.rotation.set(Math.PI / 2 + 0.35 * Math.sin(t * 0.7 + r.phase), t * 0.55 + r.phase, 0.25 * Math.cos(t * 0.5));
+          r.ring.scaling.setAll(r.n.entrance === "none" ? s : Math.max(0.0001, smooth(r.n.appear_at + 0.2, r.n.appear_at + 0.9, t)));
+          if (idle) r.ring.rotation.set(Math.PI / 2 + 0.35 * Math.sin(t * 0.7 + r.phase), t * 0.55 + r.phase, 0.25 * Math.cos(t * 0.5));
+          else r.ring.rotation.set(Math.PI / 2, 0, 0);
         }
       }
 
@@ -446,7 +466,6 @@
         else if (m.kind === "glitch") glitch = Math.max(glitch, m.strength * Math.sin(p * Math.PI));
         else if (m.kind === "focus_pull") { focusNode = m.node ? byId.get(m.node) : null; focusW = Math.sin(p * Math.PI); }
       }
-      scene.updateTransformMatrix(true);
       moments.set(shocks, flash, glitch, Math.floor(t * 30));
       if (pipe.depthOfFieldEnabled) {
         const camPos = camera.position;
@@ -464,7 +483,8 @@
         B.Vector3.ProjectToRef(tmpV, M.IdentityReadOnly, tm, vp, scr);
         const lw = L.el.offsetWidth, lh = L.el.offsetHeight, lx = scr.x - lw / 2, ly = scr.y - lh;
         const edge = Math.min(lx, W - (lx + lw), ly, H - scr.y);
-        const vis = scr.z > 0 && scr.z < 1 ? smooth(r.n.appear_at + 0.3, r.n.appear_at + 0.9, t) * Math.min(1, Math.max(0, edge / 40)) : 0;
+        const entrance = r.n.entrance === "none" ? (t >= r.n.appear_at ? 1 : 0) : smooth(r.n.appear_at + 0.3, r.n.appear_at + 0.9, t);
+        const vis = scr.z > 0 && scr.z < 1 ? entrance * Math.min(1, Math.max(0, edge / 40)) : 0;
         L.el.style.opacity = vis.toFixed(3);
         L.el.style.transform = `translate(${lx.toFixed(1)}px,${ly.toFixed(1)}px)`;
       }
@@ -688,7 +708,12 @@
         sc.set(s, s, s); B.Matrix.ComposeToRef(sc, rot, p, mtx); mtx.copyToArray(matrices, i * 16);
         const o = i * 4; colors[o] = col[0]; colors[o + 1] = col[1]; colors[o + 2] = col[2]; colors[o + 3] = 1;
       },
-      hide(i) { const o = i * 16; matrices[o] = matrices[o + 5] = matrices[o + 10] = 0; },
+      hide(i) {
+        const o = i * 16;
+        // Clear rotated basis, translation and colour too: same state as a fresh hidden instance.
+        matrices.fill(0, o, o + 15); matrices[o + 15] = 1;
+        colors.fill(0, i * 4, i * 4 + 4);
+      },
       flush() { mesh.thinInstanceBufferUpdated("matrix"); mesh.thinInstanceBufferUpdated("color"); },
     };
   }

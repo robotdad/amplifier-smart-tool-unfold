@@ -13,16 +13,25 @@ Use `scene3d` only if you can say "yes" to at least one of these:
 Removal test: flatten the idea to a 2D diagram; if only decoration is lost, stay 2D.
 
 Before authoring, check:
-1. Write the intended reading in one sentence, for example "requests pile up at the agent, then one tool call fires."
+1. State the audience's intended experience and what 3D contributes: depth, occlusion,
+   material, spatial connection or a motivated reveal. A film/product/editorial brief
+   does not call for a service graph unless its direction actually says so.
 2. Keep every precise quantity in 2D text. Depth, `size`, particle `count` and `speed` are distorted by perspective, so they show *relative* amounts at best.
-3. Budget 3–9 nodes, ≤ 5 effects, ≤ 6 labels; viewers track only a handful of moving things.
+3. Use only the objects and effects the purpose needs; one object or no effects may
+   be enough. Do not add satellites, sparks, links, rings or labels to fill a template.
 4. Choose one subject per shot.
 
-## 2. Encoding: one meaning per channel
+## 2. Optional system-diagram encoding
+
+The table and throughput/queue interpretations below apply **only to relevant
+system explanations**. They are not universal art direction. For other briefs,
+choose shape/material for the subject, use `role:"neutral"` if no category applies,
+and choose optional `color:"#RRGGBB"` independently. Explain each added effect's
+purpose or leave the effects list empty.
 
 | Channel | Meaning | Rule |
 |---|---|---|
-| `role` (hue) | category | The same role always means the same kind of thing: request blue, response green, agent violet, tool orange, data cyan, error red, cache yellow, neutral grey. Reserve `error` for failure. |
+| `role` (legacy hue) | category | In a system diagram, keep categories consistent: request blue, response green, agent violet, tool orange, data cyan, error red, cache yellow, neutral grey. A node color override does not change its role or recolor links/effects. |
 | `shape` | kind of part | Keep one shape per kind. Common choices: `cube` for services/gateways, `icosahedron` for agents, `cylinder` for stores/tools, `platform` for a stage or tier that other nodes sit on. |
 | `material` | focus vs context | See §4. |
 | `position` | topology | Put the flow left→right along x, keep z for secondary rows, and use y only for stacking. Never map a quantity to depth. |
@@ -51,7 +60,12 @@ Keep the total at ≤ 3000; the hard cap is 8000. Particles are additive glow sp
 
 ## 3. Camera and composition
 
-Use a turntable camera: `azimuth` orbits the target, `elevation` looks down, `distance` dollies, `fov` zooms. At `azimuth -90` you get the front view, where +x is screen-right and +z recedes. Increasing azimuth swings the camera toward +x.
+The supported camera is an orbit camera: `azimuth` orbits the target, `elevation`
+looks down, `distance` dollies, `fov` zooms. This describes the available controls,
+not a required turntable treatment. A still camera is valid. At `azimuth -90` you
+get the front view, where +x is screen-right and +z recedes.
+The ranges below are starting suggestions for readable system diagrams, not
+mandatory framing, rhythm or shot counts for film/product/editorial work.
 
 - **Framing math (16:9):** at the target, the visible width is `3.56 × distance × tan(fov/2)`. At fov 40 that is about 1.3×distance wide and 0.73×distance tall. Size `distance` so the subject plus its label fills the middle 60 %.
 - **Establishing shot at 0:** `target` null (centroid), elevation 22–32, distance 18–28, fov 35–42.
@@ -74,10 +88,65 @@ Use a turntable camera: `azimuth` orbits the target, `elevation` looks down, `di
 | `ceramic` | an ordinary component (default) | The role colour reads cleanly. |
 | `matte` | context, infrastructure | Muted, recedes. |
 | `glass` | boundary, container, stateless | The tint is faint. |
-| `chrome` / `gold` | a single hero or prize object | These ignore role hue, which survives only through the `ring` and label border. Keep `ring: true`, and avoid all-chrome scenes. |
-| `obsidian` | sink, storage, black box, "off" | Dark gloss. Keep `ring: true`. |
+| `chrome` / `gold` | metallic surface | Without `color`, these keep their fixed metallic hues. An explicit node color replaces their base tint, not their physical parameters. |
+| `obsidian` | dark gloss | An explicit node color replaces its base tint. Rings are optional, not a requirement. |
 
-Contrast focus against context: neon/holo on the subject, matte/ceramic elsewhere.
+These material associations are suggestions, not product claims or genre rules.
+Choose them from the actual brief; do not automatically make every subject neon/holo.
+
+### Independent style controls (opt-in)
+
+- Node `entrance:"none"` means hidden before `appear_at`, full size at and after it,
+  including frame zero when `appear_at:0`. `"pop"` restores the legacy 0.7s overshoot.
+  Rings and labels follow the selected entrance.
+- Node `idle_motion:"none"` removes bob, implicit shape tumble and automatic ring
+  rotation. `"bob"` retains the legacy idle treatment (including tumble/ring motion).
+  Explicit `spin` and `media.surface:"facing_camera"` still do what they request.
+  For a completely stationary object use no entrance/idle motion, `spin:0`, and no
+  camera-facing surface; camera moves can still change its projected appearance.
+- Optional node `color:"#RRGGBB"` is an sRGB material tint converted to linear
+  colour for lighting. It also tints that node's ring/label border, not its video
+  pixels, connected links or effects. Materials and lighting still affect the final
+  pixels; it is not a promise of exact screen RGB.
+- `floor_grid:false` retains a plain floor where the environment supplies one.
+  It does not add a floor to `deep_space`, override `floor:false`, or add one to
+  transparent output. It removes neon-grid floor emission along with the grid.
+- `post_overrides.bloom_weight` accepts 0–1; `glow_intensity` accepts 0–2.
+  Zero disables that pass. Set both to zero for no bloom/glow halo passes.
+  Unspecified members inherit independently from the selected preset/legacy glow.
+  Other post effects, material emission, particles and label CSS shadows remain;
+  this is not a universal unlit/no-post switch.
+- All new fields are optional: omitted or null preserves the old treatment.
+  Choose rings and effects deliberately rather than relying on their defaults.
+
+### Transparent layer over existing 2D work
+
+`scene3d.background:"transparent"` leaves the original `Scene.background` and all
+2D fields untouched. The canvas clears to alpha zero instead of painting the 3D
+environment, so the existing CSS background shows through. The sky, stars and
+floor are omitted, even with `floor:true`; floor is not a shadow-catching transparent
+plane. The environment texture, lights and reflections still shade the objects.
+The 3D layer stays beneath 2D elements: it does not occlude titles or graphics.
+
+Omitted/null background or `"environment"` preserves legacy behavior. A transparent
+whole-scene `Scene.background` still suppresses the 3D backdrop even when environment
+is selected; selecting the layer option does not change the whole-scene value.
+Post effects and material alpha remain active and may extend visual coverage beyond
+the geometry; explicitly disable unwanted bloom/glow and omit unnecessary moments.
+Check uncovered pixels against the actual 2D baseline, and edges against alpha
+compositing—not just equal source fields. Opaque MP4 still flattens the finished
+composition; use an appropriate alpha delivery for a transparent final output.
+Normal rendering of this explicit layer mode reads software WebGL RGBA into bounded
+owner-encoded PNGs, then presents ordinary images and typed projected labels through
+an awaited seek. This avoids a visible canvas changing the underlying 2D paint groups
+and keeps the existing 2D capture policy. Direct author-HTML previews still have a
+live canvas and are not that final preservation surface. Staging is limited to
+512 mebipixels total, about 8.6s at 1080p/30fps, with explicit refusal rather than
+trimming/downscaling; the stages share one render deadline. Lossless uncovered-pixel
+checks do not promise unchanged encoded pixels across a deliberately changed scene.
+Exact decoded repeatability of the same revision/runtime is a separate obligation.
+This control does not fix video-wrap cap artifacts or turn its unlit video surface
+into a shaded product material.
 
 | Environment | Look | Label ink / fit |
 |---|---|---|
@@ -114,8 +183,18 @@ a retained Unfold render shown inside a larger explanation, or a clip framed as 
   with every node.
 - `play_from` controls when playback starts (default: when the screen appears); `rate` speeds
   it up or slows it down; `loop: false` holds the last frame.
+- Screen `entrance:"none"` removes the 0.6s scale-in; at `appear_at:0` the full-size
+  video is present on frame zero. `"scale"` or omission retains the old entrance.
+  This does not change the source clock. A `frame:"floating"` still bobs; use bezel
+  or no frame for a stationary screen.
 - The clip is decoded at 15 frames per second and 512 px wide. Fine text inside the clip will
   not survive; show it large or not at all.
+- The required source span is limited to 60 seconds per surface, after `media_start` and
+  accounting for `rate`. A loop needs the full remaining clip, not a truncated loop.
+  Frames taller than 4096 px at 512 px wide are refused. Pages fit within 4096 × 4096;
+  all video surfaces together are limited to 134217728 atlas pixels, including padding.
+  These limits fail explicitly with `RESOURCE_LIMIT`; simplify the request rather than
+  silently shorten, crop or stretch its footage. The same limits apply to video on objects.
 
 ## 5b. Video on objects
 
@@ -139,8 +218,8 @@ used in the `explanation`.
 - Choose `every_face` or `wrap` with `spin` when the clip is texture or atmosphere, not something
   to read; a wrapped clip is only half visible at a time.
 - Choose `one_face` for a device or monitor-like object whose other sides should look solid.
-- `spin: 0` keeps a node still, facing the default camera; any other value turns it at that many
-  degrees per second.
+- `spin:0` disables rotation, not legacy bob/pop. Use the independent entrance/idle
+  controls for a stationary node. Nonzero spin turns it at that many degrees per second.
 - For reading-critical footage prefer a `screens` entry or `facing_camera`: faces are small, and the
   clip is decoded at 512 px wide.
 
@@ -170,19 +249,29 @@ Renders use software GL at about 1.5 s per frame, so each scene-second costs rou
 
 ## 8. Self-review of sampled frames
 
-Sample at 0.5 s, each shot arrival, each moment peak and near the end, then check:
+Sample frame zero, at 0.5 s, each shot arrival, each moment peak and near the end, then check:
 1. **Glance test:** is the one-sentence intended reading visible without explanation?
-2. **First frame:** is it non-empty? At least one node should have `appear_at` 0, or a 2D title should already be showing.
-3. **Focus:** is the subject sharp, framed centrally, and not clipped at the frame edges?
+2. **First frame:** is required content present at full intended size? `appear_at:0`
+   alone still starts the legacy entrance nearly invisible; use `entrance:"none"`
+   when full-size frame-zero presence is required.
+3. **Focus:** is the subject sharp and framed as intended, without unintended clipping?
 4. **Labels:** does each sit on its node, fully inside the frame, without overlapping another label or a card?
 5. **Hue identity:** do the roles stay distinguishable where streams cross or glow overlaps? Is there a white wash anywhere?
 6. **Legibility:** does the 2D text hold contrast over the 3D behind it?
 7. **Motion between samples:** does a stream read as a dotted ribbon (not specks, not a white tube)? Do appearances and moves happen in reading order?
 8. **Honesty:** is every quantity the viewer needs stated in 2D text?
+9. **Copy and claims:** does exact supplied copy match case and punctuation? Have you
+   invented a date, slogan, feature or observed performance? Remove unsupported claims.
+10. **Purpose:** does 3D contribute the intended experience, or is this the same graph
+    with different labels? Is product rotation visible on the product rather than
+    just a decorative ring? These require media review, not schema compliance.
 
 Patch the field that controls a failed check: clipping → `distance`/`fov`; label clash → `position`; wash → `count`/`intensity`/`spread`.
 
-## 9. Worked examples
+## 9. Worked examples — only for system-diagram briefs
+
+These illustrate the optional encoding in §2, not defaults or templates for unrelated
+work. Do not import their objects, particles, copy or shockwaves into another brief.
 
 **(a) Request flow**, 10 s. A 2D title sits top-left; the 2D bottom band says "Gateway → agent → tool".
 

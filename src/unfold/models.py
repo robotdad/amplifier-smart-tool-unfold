@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from .timing import FPS, MIN_DURATION, canonical_duration, encoded_frames
 
@@ -252,6 +252,10 @@ class Node3D(Strict):
     label: str | None = Field(default=None, max_length=40)
     media: Media3D | None = None  # plays a library video on the node's surface
     spin: float | None = Field(default=None, ge=-360, le=360)  # degrees/second about the vertical axis
+    # None (including an absent field) preserves the legacy treatment.
+    entrance: Literal["pop", "none"] | None = None
+    idle_motion: Literal["bob", "none"] | None = None
+    color: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")  # sRGB material tint
 
     @model_validator(mode="after")
     def media_fits_shape(self):
@@ -353,21 +357,48 @@ class Screen3D(Strict):
     frame: Literal["bezel", "floating", "none"] = "bezel"
     role: Role3D = "neutral"
     label: str | None = Field(default=None, max_length=40)
+    entrance: Literal["scale", "none"] | None = None  # None preserves the legacy scale-in
+
+
+class PostOverrides3D(Strict):
+    """Selective overrides, not a new preset. Zero disables the corresponding pass."""
+
+    bloom_weight: float | None = Field(default=None, ge=0, le=1)
+    glow_intensity: float | None = Field(default=None, ge=0, le=2)
 
 
 class Scene3D(Strict):
+    # Independent of Scene.background (the underlying CSS/2D plate).
+    # None preserves legacy behavior, including transparent whole-scene output.
+    background: Literal["environment", "transparent"] | None = Field(
+        default=None,
+        description="Transparent omits sky, stars and floor while retaining object lighting/reflections; "
+                    "Scene.background and 2D elements remain unchanged. Null keeps legacy behavior.",
+    )
     environment: Literal[
         "studio_dark", "deep_space", "dusk", "lab_white", "neon_grid"
     ] = "studio_dark"
     post: Literal["clean", "cinematic", "neon", "dreamy", "noir"] = "cinematic"
     seed: int = Field(default=1, ge=0, le=2**31 - 1)
     floor: bool = True
+    floor_grid: bool | None = None  # False keeps the environment's floor but removes its grid
+    post_overrides: PostOverrides3D | None = None
     nodes: list[Node3D] = Field(..., min_length=1, max_length=24)
     links: list[Link3D] = Field(default_factory=list, max_length=32)
     effects: list[Effect3D] = Field(default_factory=list, max_length=12)
     camera: list[Shot3D] = Field(..., min_length=1, max_length=20)
     moments: list[Moment3D] = Field(default_factory=list, max_length=16)
     screens: list[Screen3D] = Field(default_factory=list, max_length=4)
+
+    @model_serializer(mode="wrap")
+    def preserve_background_presence(self, handler):
+        # This additive nullable field did not exist in earlier retained sources.
+        # Preserve its absence through nested Scene dumps and author's numeric
+        # roundtrip, without changing any other default/null serialization.
+        data = handler(self)
+        if self.background is None and "background" not in self.model_fields_set:
+            data.pop("background", None)
+        return data
 
     @model_validator(mode="after")
     def references(self):
@@ -433,8 +464,10 @@ class Scene(Strict):
         if any(e.glow_tip for e in self.elements) and self.stroke_animation != "svg":
             raise ValueError("Glowing tips require SVG stroke animation.")
         ids = {element.id for element in self.elements}
-        if ids & {"root", "world", "scene3d"}:
-            raise ValueError("The element IDs root, world and scene3d are reserved by the backend.")
+        if ids & {"root", "world"}:
+            raise ValueError("The element IDs root and world are reserved by the backend.")
+        if self.scene3d is not None and "scene3d" in ids:
+            raise ValueError("The element ID scene3d is reserved when a scene3d layer is present.")
         if len(ids) != len(self.elements):
             raise ValueError("Element IDs must be unique.")
         if self.scene3d is None:

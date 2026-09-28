@@ -106,6 +106,7 @@ def create_server(library, *, allow_models=False):
         "retain_mutation_intent",
         "acknowledge_mutation_intent",
         "rename",
+        "fork_revision",
         "feedback",
         "retain_feedback_intent",
         "acknowledge_feedback_intent",
@@ -193,6 +194,7 @@ def create_server(library, *, allow_models=False):
                         "acknowledged_at",
                         "result",
                         "error",
+                        "planned",
                     )
                     if key in value
                 }
@@ -260,6 +262,7 @@ def create_server(library, *, allow_models=False):
             annotations=ToolAnnotations(
                 readOnlyHint=name in readonly,
                 destructiveHint=name == "remove",
+                **({"idempotentHint": True} if name == "fork_revision" else {}),
             ),
         )(invoke)
 

@@ -1,9 +1,13 @@
+import json
 import os
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from unfold.backend import Backend, run
-from unfold.models import Effect3D, Element, Link3D, Node3D, Scene, Scene3D, Shot3D
+from unfold.models import Effect3D, Element, Link3D, Media3D, Node3D, Scene, Scene3D, Shot3D
 from unfold.store import digest
 
 
@@ -171,8 +175,22 @@ def test_non_3d_scene_output_has_no_scene3d_traces(tmp_path, monkeypatch):
 # --- renderer-gated (slow: software GL, deselect with -k 'not scene3d_render') ---
 
 
+def render_one_worker(backend, source, output, monkeypatch):
+    """Vary only worker count; keep both renders on the production capture path."""
+    launch = backend._run_cli
+
+    def one_worker(arguments, **kwargs):
+        arguments = list(arguments)
+        arguments[arguments.index("--workers") + 1] = "1"
+        return launch(arguments, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(backend, "_run_cli", one_worker)
+        return backend.render(source, output)
+
+
 @pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs a babylonjs-equipped backend")
-def test_scene3d_render_is_deterministic_across_worker_counts(tmp_path):
+def test_scene3d_render_is_deterministic_across_worker_counts(tmp_path, monkeypatch):
     backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
     scene = build_scene3d_scene(duration=2)
     source = tmp_path / "source"
@@ -182,24 +200,7 @@ def test_scene3d_render_is_deterministic_across_worker_counts(tmp_path):
     backend.render(source, two_worker_output)
 
     one_worker_output = tmp_path / "one.mp4"
-    timeout = max(240, int(120 + 75 * scene.duration))
-    backend._run_cli(
-        [
-            "render",
-            str(source),
-            "--output",
-            str(one_worker_output),
-            "--format",
-            "mp4",
-            "--fps",
-            "30",
-            "--workers",
-            "1",
-            "--quality",
-            "standard",
-        ],
-        timeout=timeout,
-    )
+    render_one_worker(backend, source, one_worker_output, monkeypatch)
 
     def framemd5(path):
         return run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "framemd5", "-"], timeout=60)
@@ -346,7 +347,7 @@ def test_tampered_screen_frames_or_video_are_detected(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs a babylonjs-equipped backend")
-def test_scene3d_render_with_a_mid_timeline_screen_is_deterministic_across_worker_counts(tmp_path):
+def test_scene3d_render_with_a_mid_timeline_screen_is_deterministic_across_worker_counts(tmp_path, monkeypatch):
     backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
     clip = quadrant_clip(tmp_path)
     scene = screen_scene(duration=2, appear_at=0.6, label="Clip")
@@ -355,9 +356,7 @@ def test_scene3d_render_with_a_mid_timeline_screen_is_deterministic_across_worke
     two_worker_output = tmp_path / "two.mp4"
     backend.render(source, two_worker_output)
     one_worker_output = tmp_path / "one.mp4"
-    backend._run_cli(["render", str(source), "--output", str(one_worker_output), "--format", "mp4",
-                      "--fps", "30", "--workers", "1", "--quality", "standard"],
-                     timeout=max(240, int(120 + 75 * scene.duration)))
+    render_one_worker(backend, source, one_worker_output, monkeypatch)
 
     def framemd5(path):
         return run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "framemd5", "-"], timeout=60)
@@ -435,7 +434,7 @@ def test_author_decodes_node_media_into_its_own_atlas(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(not os.environ.get("UNFOLD_TEST_BACKEND"), reason="Needs a babylonjs-equipped backend")
-def test_scene3d_render_with_video_on_moving_nodes_is_deterministic_and_visible(tmp_path):
+def test_scene3d_render_with_video_on_moving_nodes_is_deterministic_and_visible(tmp_path, monkeypatch):
     backend = Backend(os.environ["UNFOLD_TEST_BACKEND"])
     clip = quadrant_clip(tmp_path)
     scene = video_nodes_scene(duration=2)
@@ -444,9 +443,7 @@ def test_scene3d_render_with_video_on_moving_nodes_is_deterministic_and_visible(
     two_worker_output = tmp_path / "two.mp4"
     backend.render(source, two_worker_output)
     one_worker_output = tmp_path / "one.mp4"
-    backend._run_cli(["render", str(source), "--output", str(one_worker_output), "--format", "mp4",
-                      "--fps", "30", "--workers", "1", "--quality", "standard"],
-                     timeout=max(240, int(120 + 75 * scene.duration)))
+    render_one_worker(backend, source, one_worker_output, monkeypatch)
 
     def framemd5(path):
         return run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "framemd5", "-"], timeout=60)
@@ -491,3 +488,232 @@ def test_media_surface_is_a_small_per_shape_set():
             node(shape=shape, spin=spin, media={"asset_id": VIDEO_ID, "surface": surface})
     with pytest.raises(ValueError, match="facing_camera"):
         node(shape="cube", spin=20, media={"asset_id": VIDEO_ID, "surface": "facing_camera"})
+
+
+# --- PR25 production and bounded-resource regressions (no provider/WebGL) ------
+
+
+@pytest.mark.parametrize("with_3d", [False, True])
+@pytest.mark.parametrize("alpha", [False, True])
+def test_production_render_selects_software_screenshot_only_for_3d(tmp_path, monkeypatch, with_3d, alpha):
+    backend = fixture_backend(tmp_path, monkeypatch)
+    scene = build_scene3d_scene()
+    if not with_3d:
+        scene = Scene(title="2D", duration=2, explanation="Legacy capture",
+                      elements=[dict(id="scene3d", kind="card", x=0, y=0, width=100, height=100)],
+                      tweens=[dict(target="scene3d", at=0, duration=0, opacity=1)])
+    source = tmp_path / "source"
+    backend.author(scene, source)
+    launches = []
+
+    def launch(arguments, **kwargs):
+        launches.append((arguments, kwargs))
+        Path(arguments[arguments.index("--output") + 1]).write_bytes(b"fixture")
+
+    monkeypatch.setattr(backend, "_run_cli", launch)
+    monkeypatch.setattr(backend, "probe", lambda *args, **kwargs: {
+        "width": scene.output.dimensions[0], "height": scene.output.dimensions[1],
+        "frame_count": 60, "fps": "30/1", "duration": 2, "encoded_duration": 2,
+    })
+    backend.render(source, tmp_path / ("out.mov" if alpha else "out.mp4"), alpha=alpha)
+    assert len(launches) == 1
+    arguments, options = launches[0]
+    assert options["force_screenshot"] is with_3d
+    assert arguments.count("--no-browser-gpu") == int(with_3d)
+    assert "--browser-gpu" not in arguments
+    assert arguments[arguments.index("--format") + 1] == ("mov" if alpha else "mp4")
+
+
+def test_legacy_2d_scene3d_id_is_valid_without_a_3d_layer(tmp_path, monkeypatch):
+    backend = fixture_backend(tmp_path, monkeypatch)
+    data = dict(title="Legacy", duration=1, explanation="Existing 2D composition",
+                elements=[dict(id="scene3d", kind="card", x=0, y=0, width=100, height=100)],
+                tweens=[dict(target="scene3d", at=0, duration=0, opacity=1)])
+    scene = Scene.model_validate(data, context={"retained_source": True})
+    source = tmp_path / "legacy"
+    checksum = backend.author(scene, source)
+    assert '<div id="scene3d"' in (source / "index.html").read_text()
+    assert "<canvas" not in (source / "index.html").read_text()
+    assert not (source / "babylon.js").exists()
+    assert backend.author(Scene.model_validate_json((source / "scene.json").read_text()),
+                          tmp_path / "again") == checksum
+    with pytest.raises(ValueError, match="reserved"):
+        Scene.model_validate({**data, "scene3d": scene3d()})
+    for reserved in ("root", "world"):
+        with pytest.raises(ValueError, match="reserved"):
+            Scene.model_validate({**data, "elements": [{**data["elements"][0], "id": reserved}]})
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("surface", ["screen", "node"])
+def test_public_request_carries_video_through_production_author(tmp_path, monkeypatch, surface):
+    """Real public preparation, Production and decode; replace only worker dispatch/runtime files."""
+    from unfold import Brief, Grant, Unfold
+    from unfold.agent import identity_asset_metadata
+    from unfold.intelligence import Production
+
+    backend = fixture_backend(tmp_path, monkeypatch)
+    library = Unfold(tmp_path / "library")
+    library.backend = backend
+    clip = synthetic_clip(tmp_path, seconds=0.4)
+    asset = library.import_asset(clip, role="video", rights="redistributable", name="Synthetic clip")
+    pack = library.save_pack("Video identity", {}, [asset["id"]])
+    scene = screen_scene(duration=0.2) if surface == "screen" else video_nodes_scene(duration=1)
+    if surface == "screen":
+        scene.scene3d.screens[0].asset_id = asset["id"]
+    else:
+        for n in scene.scene3d.nodes:
+            n.media.asset_id = asset["id"]
+    observed = {}
+
+    def dispatch(argv, **kwargs):
+        request = json.loads(Path(argv[-1]).read_text())
+        observed["request"] = request
+        production = Production(request)
+        production.backend = backend
+        observed["production"] = production
+        observed["author"] = production.call("author", scene.model_dump_json())
+        # Deliberately end before model dispatch, rendering or submission.
+        raise UnfoldError("OFFLINE_TEST_STOP", "Authoring integration fixture complete.")
+
+    # Replace the library's module reference, not subprocess.Popen used by real ffmpeg.
+    monkeypatch.setattr("unfold.lib.subprocess", SimpleNamespace(Popen=dispatch))
+    outcome = library.create(
+        Brief(title="Video", intent="Offline integration fixture", duration=scene.duration,
+              identity_version=pack["current_version"]),
+        Grant(provider="openai", model="unused", allow_context=True, allow_frames=True, vision=True),
+    )
+    assert outcome["status"] != "completed"
+    assert observed["author"]["authored"]
+    resource = observed["request"]["resources"][asset["id"]]
+    assert {k: resource[k] for k in ("role", "sha256", "path")} == {
+        "role": "video", "sha256": asset["sha256"], "path": asset["path"],
+    }
+    assert identity_asset_metadata({asset["id"]: {**resource, "bytes": "private"}}) == {
+        asset["id"]: {"name": "Synthetic clip", "role": "video"},
+    }
+    production = observed["production"]
+    source = production.directory / "source"
+    manifests = json.loads((source / "screens.json").read_text())
+    assert set(manifests) == ({"tv"} if surface == "screen" else {"still", "globe"})
+    assert all(m["frames"] > 0 and m["pages"] for m in manifests.values())
+    retained = backend.retained_resources(source)
+    # Continue through Production with only retained video metadata, not the original file.
+    Path(asset["path"]).unlink()
+    production.request["resources"] = retained
+    production.store.put("operation", dict(id=production.request["operation_id"], status="running"))
+    assert production.call("author", scene.model_dump_json()) == observed["author"]
+    retained_path = Path(retained[asset["id"]]["path"])
+    retained_path.write_bytes(retained_path.read_bytes() + b"changed")
+    with pytest.raises(UnfoldError) as changed:
+        production.call("author", scene.model_dump_json())
+    assert changed.value.code == "MATERIAL_CHANGED"
+
+
+@pytest.mark.parametrize("surface", ["screen", "node"])
+@pytest.mark.parametrize("loop", [False, True])
+def test_required_video_span_over_60_seconds_is_refused_before_decode(tmp_path, monkeypatch, surface, loop):
+    backend = fixture_backend(tmp_path, monkeypatch)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"metadata-only span fixture")
+    scene = screen_scene(duration=30, rate=4, loop=loop)
+    if surface == "node":
+        scene.scene3d.screens = []
+        scene.scene3d.camera = [Shot3D(at=0)]
+        scene.scene3d.nodes[0].media = Media3D(asset_id=VIDEO_ID, rate=4, loop=loop)
+    monkeypatch.setattr("unfold.backend.probe_video_duration", lambda _: 120)
+    def forbidden(*args, **kwargs):
+        pytest.fail("Over-budget source must be refused, not decoded with a shortened span")
+    monkeypatch.setattr("unfold.backend.decode_screen_atlases", forbidden)
+    with pytest.raises(UnfoldError, match="60 source seconds") as caught:
+        backend.author(scene, tmp_path / "source", video_resources(clip))
+    assert caught.value.code == "RESOURCE_LIMIT"
+
+
+@pytest.mark.parametrize("length,options,expected", [
+    (120, {"rate": 2}, 60),                         # boundary, not clamped
+    (130, {"rate": 4, "play_from": 20}, 40),        # delayed accelerated playback
+    (70, {"media_start": 10, "loop": True}, 60),    # full remaining loop
+    (12, {"media_start": 2, "rate": 4}, 10),        # real end holds last frame
+    (12, {"media_start": 2, "rate": 0.25}, 7.5),    # slowed clip
+])
+def test_supported_video_span_semantics_are_preserved(tmp_path, monkeypatch, length, options, expected):
+    backend = fixture_backend(tmp_path, monkeypatch)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"metadata-only span fixture")
+    spans = []
+    monkeypatch.setattr("unfold.backend.probe_video_duration", lambda _: length)
+    def decode(video, media, identity, start, span, **kwargs):
+        spans.append((start, span))
+        return {"pages": []}
+    monkeypatch.setattr("unfold.backend.decode_screen_atlases", decode)
+    backend.author(screen_scene(duration=30, **options), tmp_path / "source", video_resources(clip))
+    assert spans == [(options.get("media_start", 0), expected)]
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("size", ["32x512", "512x32", "64x512", "320x182"])
+def test_atlas_geometry_is_bounded_without_cropping_or_stretching(tmp_path, size):
+    from PIL import Image
+
+    from unfold.backend import SCREEN_ATLAS_MAX, decode_screen_atlases
+
+    clip = tmp_path / "aspect.mp4"
+    run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=15:duration=0.2",
+         "-c:v", "libx264", "-threads", "1", str(clip)])
+    if size == "32x512":
+        with pytest.raises(UnfoldError, match="4096 pixels high") as caught:
+            decode_screen_atlases(clip, tmp_path / "media", "tv", 0, 0.2)
+        assert caught.value.code == "RESOURCE_LIMIT"
+        assert not list((tmp_path / "media/screens").glob("*.png"))
+        return
+    manifest = decode_screen_atlases(clip, tmp_path / "media", "tv", 0, 0.2)
+    w, h = map(int, size.split("x"))
+    assert manifest["tile"] == [512, round(h * 512 / w / 2) * 2]
+    for page in manifest["pages"]:
+        assert 0 < page["width"] <= SCREEN_ATLAS_MAX
+        assert 0 < page["height"] <= SCREEN_ATLAS_MAX
+        with Image.open(tmp_path / page["file"]) as image:
+            assert image.size == (page["width"], page["height"])
+    assert manifest["frames"] == 3
+
+
+@needs_ffmpeg
+def test_pixel_budget_is_checked_before_full_decode_and_shared_by_all_surfaces(tmp_path, monkeypatch):
+    from unfold.backend import decode_screen_atlases
+
+    clip = synthetic_clip(tmp_path, seconds=0.2)
+    # One row includes padding to eight columns: exactly 4096 * 288 pixels.
+    row_pixels = 4096 * 288
+    calls = []
+    real_run = run
+    def track(argv, **kwargs):
+        calls.append(argv)
+        return real_run(argv, **kwargs)
+    monkeypatch.setattr("unfold.backend.run", track)
+    with pytest.raises(UnfoldError) as caught:
+        decode_screen_atlases(clip, tmp_path / "direct/media", "tv", 0, 0.2,
+                             pixel_budget=row_pixels - 1)
+    assert caught.value.code == "RESOURCE_LIMIT"
+    assert len(calls) == 1 and calls[0][-1].endswith("probe.png")
+    assert not list((tmp_path / "direct/media/screens").glob("*.png"))
+    backend = fixture_backend(tmp_path, monkeypatch)
+    monkeypatch.setattr("unfold.backend.SCREEN_MAX_PIXELS", row_pixels)
+    scene = screen_scene(duration=0.2)
+    scene.scene3d.nodes[0].media = Media3D(asset_id=VIDEO_ID)
+    with pytest.raises(UnfoldError) as caught:
+        backend.author(scene, tmp_path / "combined", video_resources(clip))
+    assert caught.value.code == "RESOURCE_LIMIT"
+    assert not (tmp_path / "combined/screens.json").exists()
+    assert not (tmp_path / "combined/scene.json").exists()
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="Needs node for runtime unit probes")
+def test_runtime_hidden_sprite_and_projection_are_history_independent():
+    result = subprocess.run(
+        ["node", str(Path(__file__).parent / "fixtures/scene3d_state.cjs"),
+         str(Path(__file__).parents[1] / "src/unfold/resources/scene3d_runtime.js")],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "sprite and camera state regressions passed" in result.stdout

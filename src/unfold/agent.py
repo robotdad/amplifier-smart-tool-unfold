@@ -27,6 +27,12 @@ class Finished(BaseException):
     pass
 
 
+def identity_asset_metadata(resources):
+    """Disclose only authoring metadata, never local paths, hashes or media bytes."""
+    return {i: {k: a[k] for k in ("name", "role", "font") if k in a}
+            for i, a in resources.items()}
+
+
 def disclosure_size(value):
     """Count encoded image payloads separately, including retained history on retries."""
     image_bytes = 0
@@ -283,11 +289,13 @@ async def execute(owner):
         prompt += "\n" + files("unfold").joinpath("resources/scene3d_guide.md").read_text()
         prompt += "\nSCENE SCHEMA:\n" + json.dumps(Scene.model_json_schema())
         prompt += "\nINPUT DATA:\n" + json.dumps(
-            {key: owner.request.get(key) for key in ("brief", "feedback", "base_scene")}
+            {key: owner.request.get(key) for key in (
+                "brief", "feedback", "base_scene", "identity_semantics", "identity_provenance",
+                "selected_identity",
+            )}
         )
-        prompt += "\nAVAILABLE IDENTITY ASSETS (image asset_id; text/card font_asset_id):\n" + json.dumps(
-            {i: {k: a[k] for k in ("name", "role", "font") if k in a}
-             for i, a in owner.request.get("resources", {}).items()}
+        prompt += "\nAVAILABLE IDENTITY ASSETS (image/video asset_id; text/card font_asset_id):\n" + json.dumps(
+            identity_asset_metadata(owner.request.get("resources", {}))
         )
         await engine.submit_turn(
             {"sessionId": owner.request["operation_id"], "turnId": "1", "prompt": prompt}

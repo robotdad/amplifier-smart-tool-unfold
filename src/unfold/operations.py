@@ -2,6 +2,7 @@
 
 # An explicit allowlist, never arbitrary getattr from untrusted UI input.
 CAPABILITIES = {
+    "fork-revision": "fork_revision",
     "export-file": "export_file",
     "submit-creation": "submit_creation",
     "cancel-job": "cancel_job",
