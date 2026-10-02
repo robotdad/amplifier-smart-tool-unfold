@@ -1,0 +1,18 @@
+name: Offline public Agent integration
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  agent-public:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv sync --frozen --extra smart
+      - name: Verify public sessions, tools, images and cancellation offline
+        run: uv run --frozen --extra smart pytest -q -rs tests/test_agent_public.py

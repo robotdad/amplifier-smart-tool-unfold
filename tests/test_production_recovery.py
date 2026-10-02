@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from unfold import Brief, Grant, Unfold, UnfoldError
-from unfold.agent import provider_entry
 from unfold.credentials import credential, worker_environment
 from unfold.processes import owned_process, process_identity, stop_tree
 from unfold.store import digest, uid
@@ -555,16 +554,8 @@ def test_credential_aliases_doctor_worker_and_provider_agree(
     assert environment.get("GEMINI_API_KEY") == value
     assert "GOOGLE_API_KEY" not in environment
     assert "OPENAI_API_KEY" not in environment
-    if value:
-        entry = provider_entry(GRANT)
-        assert entry["module"] == "provider-gemini"
-        assert entry["config"]["api_key"] == value
-        assert entry["config"]["default_model"] == GRANT.model
-    else:
-        with pytest.raises(UnfoldError, match="credential"):
-            provider_entry(GRANT)
     # Gemini aliases cannot override an explicit different provider/model.
     other = GRANT.model_copy(update={"provider": "openai", "model": "chosen-openai-model"})
-    assert provider_entry(other)["config"]["default_model"] == "chosen-openai-model"
-    assert provider_entry(other)["config"]["api_key"] == "unrelated-openai-fixture"
+    assert other.model == "chosen-openai-model"
+    assert credential(other.provider)[1] == "unrelated-openai-fixture"
     assert "GEMINI_API_KEY" not in worker_environment("openai")

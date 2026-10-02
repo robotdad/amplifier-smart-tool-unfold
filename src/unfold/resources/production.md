@@ -56,9 +56,11 @@ Call production with action and payload (a JSON string):
 - sample: `{"times":[0,1,2.466666666666667]}` samples a 2.5-second clip. Choose
   times within the actual duration; a one-frame clip can only sample time 0.
   Samples select the containing frame and return its timestamp plus requested_time.
-  The next model call receives those JPEG images; examine them before submitting.
+  End this turn after sampling. The next user turn receives those JPEG images;
+  examine them before submitting. Do not call more tools while images are pending.
 - submit: `{"review":"what you saw and changed", "limitations":["..."]}`.
-  Requires rendered current source and images actually delivered to a model call.
+  Requires rendered current source and images supplied in the current or an earlier
+  user turn. After successful submission, end the turn normally. Do not cancel it.
   Do not claim human acceptance or uninterrupted temporal/audio review from stills.
 - limitation: `{"reason":"why this request cannot be completed"}` stops the work.
 
@@ -131,8 +133,8 @@ authored element coordinates or timing. Render and inspect close-ups AND transit
 
 Create → render → sample → inspect images → repair if needed → render/sample again
 → submit. Keep a render allowance for repair. Source schema validation is not visual
-verification. Still samples leave motion between samples unverified. Use the final
-model call for submission, not another round of drafting. Free-form prose alone is
+verification. Still samples leave motion between samples unverified. Submit once
+the current rendered source has been reviewed. Free-form prose alone is
 not a completed result.
 
 Backend: HyperFrames 0.8.33 / GSAP 3.14.2. Unfold generates the paused GSAP timeline,

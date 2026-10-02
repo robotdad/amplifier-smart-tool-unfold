@@ -2,15 +2,12 @@
 
 Worker transport/media probe are explicit doubles; no model calls or renders.
 """
-import asyncio
 import copy
 import hashlib
 import json
 import socket
-import sys
 import types
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -25,37 +22,8 @@ CALLER = '  Bright maquette — no bloom.\nCase and punctuation: {"identity": "c
 
 
 def capture_prompt(owner):
-    """Exercise actual execute() assembly without dispatching its provider turn."""
-    captured = []
-    class Engine:
-        def __init__(self, **kwargs):
-            pass
-
-        async def boot(self, *args):
-            pass
-
-        async def submit_turn(self, payload):
-            captured.append(payload["prompt"])
-
-        async def shutdown(self):
-            pass
-
-    modules = {name: types.ModuleType(name) for name in (
-        "amplifier_agent_lib", "amplifier_agent_lib.engine", "amplifier_agent_lib.protocol",
-        "amplifier_agent_lib.protocol_points", "amplifier_agent_lib.protocol_points.defaults_cli",
-    )}
-    modules["amplifier_agent_lib.engine"].Engine = Engine
-    protocol = modules["amplifier_agent_lib.protocol"]
-    protocol.PROTOCOL_VERSION = "offline-fixture"
-    protocol.server_default_capabilities = lambda: {}
-    defaults = modules["amplifier_agent_lib.protocol_points.defaults_cli"]
-    defaults.CliApprovalSystem = lambda **kwargs: None
-    defaults.CliDisplaySystem = lambda **kwargs: None
-    owner.result = {"prompt_capture_only": True}
-    with patch.dict(sys.modules, modules), patch.object(agent, "provider_entry", lambda grant: {}):
-        asyncio.run(agent.execute(owner))
-    owner.result = None
-    prompt = captured[0]
+    """Exercise production prompt assembly without constructing an agent."""
+    prompt = agent.production_prompt(owner)
     data = json.loads(prompt.split("\nINPUT DATA:\n", 1)[1].split("\nAVAILABLE IDENTITY ASSETS", 1)[0])
     assets = json.loads(prompt.split("\nAVAILABLE IDENTITY ASSETS", 1)[1].split(":\n", 1)[1])
     return prompt, data, assets
@@ -78,7 +46,7 @@ def rig(tmp_path, monkeypatch):
         owner = Production(request)
         prompt, data, assets = capture_prompt(owner)
         captured.append(dict(request=request, prompt=prompt, data=data, assets=assets, owner=owner))
-        assert owner.model_calls == owner.provider_attempts == owner.renders == 0
+        assert owner.calls == owner.renders == 0
         directory = owner.directory
         source = directory / "source"
         source.mkdir()
@@ -357,27 +325,13 @@ def test_guards_before_dispatch_and_stale_base_are_preserved(rig, tmp_path):
     assert len(captured) == 2
 
 
-def test_full_prompt_still_hits_existing_disclosure_gate(rig, monkeypatch):
+def test_full_prompt_preserves_large_authorized_identity(rig):
     library, captured = rig
     version = library.save_pack("Large pack", {"required": "x" * 19000})["current_version"]
     create_revision(library, make_brief(version, "y" * 20000))
     cap = captured[-1]
-    owner = cap["owner"]
-    owner.grant = owner.grant.model_copy(update={"max_text_bytes": 1000})
-    # Gate imports Message even though the pre-dispatch limit fails. No provider needed.
-    message_module = types.ModuleType("amplifier_core.message_models")
-    message_module.Message = object
-    monkeypatch.setitem(sys.modules, "amplifier_core.message_models", message_module)
-    class Request:
-        def model_dump(self, **kwargs):
-            return {"messages": [{"role": "user", "content": cap["prompt"]}]}
-    class NeverProvider:
-        async def complete(self, *args, **kwargs):
-            pytest.fail("Over-budget prompt reached provider")
-    with pytest.raises(UnfoldError) as caught:
-        asyncio.run(agent.Gate(NeverProvider(), owner).complete(Request()))
-    assert caught.value.code == "RESOURCE_LIMIT"
-    assert owner.model_calls == owner.provider_attempts == 0
+    assert cap["owner"].calls == 0
+    assert "x" * 19000 in cap["prompt"]
     assert "selected_identity" in cap["prompt"] and "y" * 20000 in cap["prompt"]
 
 

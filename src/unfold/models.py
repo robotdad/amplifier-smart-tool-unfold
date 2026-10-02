@@ -82,14 +82,23 @@ class Grant(Strict):
     allow_context: bool = False
     allow_frames: bool = False
     vision: bool = False
-    max_model_calls: int = Field(default=12, ge=1, le=24)
     max_tool_calls: int = Field(default=30, ge=1, le=60)
     max_renders: int = Field(default=3, ge=1, le=5)
     max_frames: int = Field(default=16, ge=1, le=40)
     max_seconds: int = Field(default=900, ge=30, le=1800)
-    max_text_bytes: int = Field(default=5000000, ge=1000, le=5000000)
-    max_image_bytes: int = Field(default=16000000, ge=1000, le=40000000)
-    max_response_tokens: int = Field(default=12000, ge=1000, le=20000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def unsupported_inference_controls(cls, value):
+        removed = {"max_model_calls", "max_text_bytes", "max_image_bytes", "max_response_tokens"}
+        if isinstance(value, dict) and (found := removed.intersection(value)):
+            raise ValueError(
+                "Unsupported inference controls: " + ", ".join(sorted(found)) + ". "
+                "Remove these fields; Unfold uses Amplifier Agent's public API and does not "
+                "enforce inference-call, disclosure-byte or response-token budgets. "
+                "Local tool/render/frame limits and max_seconds remain supported."
+            )
+        return value
 
 
 Angle = Annotated[float, Field(ge=-3600, le=3600)]

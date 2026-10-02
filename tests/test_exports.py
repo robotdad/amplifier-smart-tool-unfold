@@ -1,6 +1,7 @@
 """Provider-free export acceptance. Scripted production is not creative/media proof."""
 
 import errno
+import hashlib
 import json
 import os
 import subprocess
@@ -511,6 +512,114 @@ def test_cli_partial_outcome_and_json_adapter(rig, tmp_path, monkeypatch, capsys
     assert result["export"]["status"] == "failed"
     assert json.loads(capture.err)["error"]
     assert path.read_bytes() == b"competitor"
+
+
+@pytest.mark.parametrize(("generation", "delivery", "exit_code", "error_code"), [
+    ("running", "not_started", 0, None),
+    ("completed", "completed", 0, None),
+    ("failed", "not_started", 1, "EXPORT_INCOMPLETE"),
+    ("cancelled", "not_started", 1, "EXPORT_INCOMPLETE"),
+    ("interrupted", "not_started", 1, "EXPORT_INCOMPLETE"),
+    ("failed", "completed", 1, None),
+    ("cancelled", "completed", 1, None),
+    ("interrupted", "completed", 1, None),
+    ("completed", "failed", 1, "EXPORT_FAILED"),
+    ("completed", "incomplete", 1, "MUTATION_INCOMPLETE"),
+    ("completed", "not_started", 1, "EXPORT_INCOMPLETE"),
+    ("running", "failed", 1, "EXPORT_FAILED"),
+])
+def test_cli_inspect_export_state_is_passive(
+    tmp_path, generation, delivery, exit_code, error_code
+):
+    """Retained state fixtures exercise the real CLI without generation or export."""
+    tool = Unfold(tmp_path / "library", tmp_path / "absent-backend")
+    operation_id, revision_id, artifact_id = uid(), uid(), uid()
+    export_id = hashlib.sha256(("create-export:" + operation_id).encode()).hexdigest()[:32]
+    operation = {
+        "id": operation_id, "kind": "operation", "status": generation,
+    }
+    if generation == "completed":
+        operation.update(
+            revision_id=revision_id, primary_artifact_id=artifact_id,
+            outputs=[{"artifact_id": artifact_id, "revision_id": revision_id}],
+        )
+    elif generation in {"failed", "cancelled", "interrupted"}:
+        operation["error"] = {"code": "GENERATION_FAILED", "message": "Fixture failure"}
+    tool.store.put("operation", operation)
+    destination = tmp_path / "result.mp4"
+    tool.store.put("mutation_intent", {
+        "id": "mutation-intent-" + export_id,
+        "destination": str(destination),
+    })
+    if delivery != "not_started":
+        result = {"status": delivery, "receipt_id": export_id}
+        if error_code:
+            result["error"] = {"code": error_code, "message": "Fixture export failure"}
+        tool.store.put("mutation_receipt", {"id": export_id, "result": result})
+    expected = tool.inspect(operation_id)
+    before = {p.relative_to(tool.store.root): p.read_bytes()
+              for p in tool.store.root.rglob("*") if p.is_file()}
+    code = """
+import subprocess
+import sys
+from unfold.cli import main
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("Inspection must not launch generation or export processes")
+
+subprocess.Popen = forbidden
+try:
+    main()
+finally:
+    assert not any(name.startswith("amplifier") for name in sys.modules)
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", code, "--library", str(tool.store.root),
+         "--backend", str(tmp_path / "absent-backend"), "inspect", operation_id],
+        capture_output=True, text=True, timeout=20,
+        env={k: v for k, v in os.environ.items()
+             if k in {"PATH", "HOME", "SYSTEMROOT"}},
+    )
+    assert completed.returncode == exit_code, completed.stderr
+    assert json.loads(completed.stdout) == expected
+    assert expected["status"] == generation
+    assert expected["export"]["status"] == delivery
+    if error_code:
+        assert json.loads(completed.stderr)["error"]["code"] == error_code
+    else:
+        assert completed.stderr == ""
+    assert not destination.exists()
+    assert before == {p.relative_to(tool.store.root): p.read_bytes()
+                      for p in tool.store.root.rglob("*") if p.is_file()}
+
+
+@POSIX
+def test_cli_create_running_export_still_exits_nonzero(rig, tmp_path, monkeypatch, capsys):
+    from unfold import cli
+
+    tool, calls = rig
+    monkeypatch.setattr(cli, "Unfold", lambda *a: tool)
+    monkeypatch.setattr(tool, "_produce", lambda *a, **kw: {
+        "id": kw["request_id"], "status": "running", "kind": "operation",
+    })
+    brief, grant = tmp_path / "brief.json", tmp_path / "grant.json"
+    brief.write_text(BRIEF.model_dump_json())
+    grant.write_text(GRANT.model_dump_json())
+    destination = tmp_path / "result.mp4"
+    monkeypatch.setattr(sys, "argv", [
+        "unfold", "create", "--brief", str(brief), "--grant", str(grant),
+        "--export-to", str(destination),
+    ])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 1
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["status"] == "running"
+    assert result["export"]["status"] == "not_started"
+    assert json.loads(captured.err)["error"]["code"] == "GENERATION_NOT_COMPLETED"
+    assert not destination.exists()
+    assert not calls
 
 
 @POSIX

@@ -177,9 +177,10 @@ def test_mcp_sdk_schema_resources_shared_actions_and_permission(tmp_path):
             assert creation.meta["ui"] == {"resourceUri": UI_URI, "visibility": ["model", "app"]}
             assert transfer.meta["ui"] == {"resourceUri": UI_URI, "visibility": ["model", "app"]}
             assert (
-                creation.input_schema["$defs"]["Grant"]["properties"]["max_model_calls"]["maximum"]
-                == 24
+                creation.input_schema["$defs"]["Grant"]["properties"]["max_tool_calls"]["maximum"]
+                == 60
             )
+            assert "max_model_calls" not in creation.input_schema["$defs"]["Grant"]["properties"]
             assert creation.input_schema["$defs"]["Grant"]["additionalProperties"] is False
             html = (await client.read_resource(UI_URI)).contents[0]
             assert html.mime_type == APP_MIME_TYPE

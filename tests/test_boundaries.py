@@ -221,18 +221,15 @@ def test_cancel_reports_request_then_preserves_completed(saved):
     assert tool.cancel(operation["id"])["status"] == "completed"
 
 
-def test_disclosure_counts_retained_images_separately_from_text():
-    from unfold.agent import disclosure_size
+@pytest.mark.parametrize("field", [
+    "max_model_calls", "max_text_bytes", "max_image_bytes", "max_response_tokens",
+])
+def test_removed_inference_controls_are_actionable_errors(field):
+    from unfold import Grant
 
-    image = {
-        "type": "image",
-        "source": {"type": "base64", "media_type": "image/jpeg", "data": "x" * 1000000},
-    }
-    text_bytes, image_bytes = disclosure_size(
-        {"messages": [{"content": [image, image, {"type": "text", "text": "review"}]}]}
-    )
-    assert text_bytes < 1000
-    assert image_bytes == 2000000
+    with pytest.raises(ValueError, match="Unsupported inference controls.*Remove these fields"):
+        Grant.model_validate({"provider": "gemini", "model": "fixture", field: 1000})
+    assert field not in Grant.model_json_schema()["properties"]
 
 
 def test_feedback_cannot_claim_unrelated_revision(saved):

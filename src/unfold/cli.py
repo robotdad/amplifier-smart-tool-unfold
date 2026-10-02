@@ -149,7 +149,15 @@ def main():
                 args.command == "export-file" or
                 args.command == "call" and args.capability == "export-file"
             ) else {})
-            if delivery and delivery.get("status") != "completed":
+            # A passive read of ongoing generation does not request a completed copy.
+            pending_inspection = (
+                args.command == "inspect"
+                and result.get("kind") == "operation"
+                and result.get("status") == "running"
+                and delivery
+                and delivery.get("status") == "not_started"
+            )
+            if delivery and delivery.get("status") != "completed" and not pending_inspection:
                 print(json.dumps({"error": delivery.get("error", {
                     "code": "EXPORT_INCOMPLETE", "message": "Requested copy did not complete."
                 })}), file=sys.stderr)

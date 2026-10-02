@@ -13,7 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=2.2,<3"]
-smart = ["amplifier-agent @ git+https://github.com/microsoft/amplifier-agent@v0.17.0", "google-genai>=1", "openai>=1", "anthropic>=0.70"]
+smart = ["amplifier-agent @ git+https://github.com/microsoft/amplifier-agent@v0.20.0#subdirectory=packages/python"]
 
 [project.scripts]
 unfold = "unfold.cli:main"

@@ -1,7 +1,9 @@
 """Model-facing production capabilities and executable submission boundaries."""
 
+import copy
 import hashlib
 import json
+import math
 import os
 import threading
 from pathlib import Path
@@ -29,10 +31,8 @@ class Production:
         self.observations = {}
         self.reference_evidence = None
         self.delivered = set()
-        self.calls = self.model_calls = self.renders = self.frames = 0
-        self.provider_attempts = 0
+        self.calls = self.renders = self.frames = 0
         self.rejections = 0
-        self.text_bytes = self.image_bytes = 0
         self.result = self.fatal = None
         self.lock = threading.RLock()
         reference = request.get("reference")
@@ -90,7 +90,6 @@ class Production:
 
     def remaining(self):
         return {
-            "model_calls": self.grant.max_model_calls - self.model_calls,
             "tool_calls": self.grant.max_tool_calls - self.calls,
             "renders": self.grant.max_renders - self.renders,
             "frames": self.grant.max_frames - self.frames,
@@ -138,7 +137,17 @@ class Production:
                 self.fatal = UnfoldError("RESOURCE_LIMIT", "Tool allowance exhausted.")
                 raise self.fatal
             self.event("production", {"action": action, "call": self.calls})
+            if not isinstance(payload, str):
+                raise ValueError("payload must be a JSON object encoded as a string.")
             data = json.loads(payload)
+            if not isinstance(data, dict):
+                raise ValueError("payload must encode a JSON object.")
+            self.validate_payload(action, data)
+            if self.observations.keys() - self.delivered and action not in {"inspect", "limitation"}:
+                raise ValueError(
+                    "Images are waiting for the next user turn. End this turn now; "
+                    "then inspect the images before changing or submitting the scene."
+                )
             if action == "inspect":
                 return {
                     "scene": self.scene.model_dump() if self.scene else None,
@@ -147,8 +156,6 @@ class Production:
                 }
             if action in ("author", "patch"):
                 if action == "patch":
-                    import copy
-
                     scene_data = copy.deepcopy(
                         self.scene.model_dump() if self.scene else self.request.get("base_scene")
                     )
@@ -228,7 +235,8 @@ class Production:
                 return {
                     "evidence_id": evidence_id,
                     "times": times,
-                    "next": "Images will be delivered with the next model call; inspect before submitting.",
+                    "next": "End this turn now. Images will arrive in the next user turn; "
+                            "inspect them before changing or submitting the scene.",
                 }
             if action == "submit":
                 if not self.rendered or not self.delivered:
@@ -244,21 +252,13 @@ class Production:
                     raise ValueError("Rendered bytes changed since inspection.")
                 review = data.get("review", "")
                 limitations = data.get("limitations", [])
-                if not isinstance(review, str) or not 1 <= len(review) <= 5000:
-                    raise ValueError("Provide a bounded review of the actual sampled images.")
-                if (
-                    not isinstance(limitations, list)
-                    or len(limitations) > 20
-                    or any(not isinstance(x, str) or len(x) > 1000 for x in limitations)
-                ):
-                    raise ValueError("Provide at most 20 short limitations.")
-                evidence = [self.observations[i] for i in self.delivered]
+                evidence = [copy.deepcopy(self.observations[i]) for i in sorted(self.delivered)]
                 for observation in evidence:
                     for frame in observation["frames"]:
                         if digest(frame["path"]) != frame["sha256"]:
                             raise ValueError("Observation bytes changed.")
                         frame["path"] = str(Path(frame["path"]).relative_to(self.store.root))
-                self.result = {
+                candidate = {
                     "source_sha256": self.rendered["source_sha256"],
                     "render": self.rendered,
                     "evidence": evidence,
@@ -272,22 +272,62 @@ class Production:
                     ],
                     "backend": self.backend.doctor()["versions"],
                     "usage": {
-                        "model_calls": self.model_calls,
-                        "provider_attempts": (self.provider_attempts
-                                              if self.grant.provider == "openai" else None),
                         "tool_calls": self.calls,
                         "renders": self.renders,
                         "frames": self.frames,
-                        "text_bytes": self.text_bytes,
-                        "image_bytes": self.image_bytes,
                     },
                 }
+                # This is durable submission evidence, NOT execution success. The
+                # worker/recovery commit path reads result.json only, never this file.
+                relative = Path("operations") / self.request["operation_id"] / "candidate.json"
+                encoded = json.dumps({
+                    "operation_id": self.request["operation_id"],
+                    "state": "validated_candidate",
+                    "candidate": candidate,
+                }, ensure_ascii=False).encode()
+                with self.store.open_relative(relative, os.O_WRONLY | os.O_CREAT | os.O_EXCL) as fd:
+                    write_all(fd, encoded)
+                    os.fsync(fd)
+                self.event("candidate_retained", {
+                    "path": str(relative), "sha256": hashlib.sha256(encoded).hexdigest(),
+                    "source_sha256": candidate["source_sha256"],
+                    "video_sha256": candidate["render"]["sha256"],
+                })
+                self.result = candidate
                 return {"submitted": True}
             if action == "limitation":
                 self.fatal = UnfoldError(
-                    "CREATIVE_LIMITATION", str(data.get("reason", "Unsupported request"))[:2000]
+                    "CREATIVE_LIMITATION", data["reason"]
                 )
                 raise self.fatal
+            raise ValueError("Unknown production action.")
+
+    def validate_payload(self, action, data):
+        """Reject malformed action data before backend effects or render/frame charges."""
+        if action == "sample":
+            times = data.get("times")
+            if (not isinstance(times, list) or not 1 <= len(times) <= 12
+                    or any(type(t) not in (int, float)
+                           or not 0 <= t < self.request["brief"]["duration"]
+                           or not math.isfinite(t) for t in times)):
+                raise ValueError("sample requires times: a list of 1–12 finite numbers within the duration.")
+        elif action == "patch":
+            elements = data.get("elements", {})
+            if (not isinstance(elements, dict)
+                    or any(not isinstance(changes, dict) for changes in elements.values())):
+                raise ValueError("patch elements must map existing element IDs to property objects.")
+        elif action == "submit":
+            review, limitations = data.get("review"), data.get("limitations", [])
+            if not isinstance(review, str) or not 1 <= len(review) <= 5000:
+                raise ValueError("Provide a bounded review of the actual sampled images.")
+            if (not isinstance(limitations, list) or len(limitations) > 20
+                    or any(not isinstance(x, str) or len(x) > 1000 for x in limitations)):
+                raise ValueError("Provide at most 20 short limitations.")
+        elif action == "limitation":
+            reason = data.get("reason")
+            if not isinstance(reason, str) or not 1 <= len(reason) <= 2000:
+                raise ValueError("limitation requires a nonempty reason of at most 2000 characters.")
+        elif action not in {"inspect", "render", "author"}:
             raise ValueError("Unknown production action.")
 
     async def execute_tool(self, action, payload):
@@ -296,12 +336,12 @@ class Production:
         return await asyncio.to_thread(self._execute_tool, action, payload)
 
     def _execute_tool(self, action, payload):
-        from amplifier_core import ToolResult
+        from amplifier_agent import ToolFailed, ToolOutcomeUnknown
 
         with self.lock:
             try:
                 value = self.call(action, payload)
-                return ToolResult(success=True, output=value)
+                return json.dumps(value)
             except Exception as exc:
                 if isinstance(exc, ValidationError):
                     errors = exc.errors(include_input=False, include_url=False, include_context=False)
@@ -312,35 +352,39 @@ class Production:
                     error = exc.as_dict()
                 else:
                     error = {"code": "INVALID_INPUT", "message": str(exc)[:3000]}
-                if action in {"author", "patch"} and isinstance(exc, ValueError):
+                if action in {"author", "patch"} and isinstance(exc, ValueError) and isinstance(payload, str):
                     # Serialize diagnostics with other tool actions; invalid work must
                     # never replace a valid source or reset its review evidence.
                     self.rejected_authoring(action, payload, error)
                 self.event("production_error", {"action": action, "error": error})
-                return ToolResult(success=False, error=error)
+                failure = ToolFailed if isinstance(exc, (ValueError, UnfoldError)) else ToolOutcomeUnknown
+                raise failure(json.dumps(error)) from None
 
     def author_tool(self):
-        owner = self
+        from amplifier_agent import Tool
 
-        class Author:
-            name = "author_scene"
-            description = "Author a complete scene. Constraints are validated before persistence."
-            input_schema = Scene.model_json_schema()
+        async def author(input, context):
+            return await self.execute_tool("author", json.dumps(input))
 
-            async def execute(self, input):
-                return await owner.execute_tool("author", json.dumps(input))
-
-        return Author()
+        return Tool(
+            name="author_scene",
+            description="Author a complete scene. Constraints are validated before persistence.",
+            input_schema={"$schema": "https://json-schema.org/draft/2020-12/schema",
+                          **Scene.model_json_schema()},
+            handler=author,
+        )
 
     def tool(self):
-        owner = self
+        from amplifier_agent import Tool
 
-        class Tool:
-            name = "production"
-            description = (
-                "Patch, render, inspect and submit a composition. Use author_scene for authoring."
-            )
-            input_schema = {
+        async def production(input, context):
+            return await self.execute_tool(input.get("action"), input.get("payload"))
+
+        return Tool(
+            name="production",
+            description="Patch, render, inspect and submit a composition. Use author_scene for authoring.",
+            input_schema={
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
                     "action": {
@@ -361,9 +405,6 @@ class Production:
                 },
                 "required": ["action", "payload"],
                 "additionalProperties": False,
-            }
-
-            async def execute(self, input):
-                return await owner.execute_tool(input.get("action"), input.get("payload"))
-
-        return Tool()
+            },
+            handler=production,
+        )

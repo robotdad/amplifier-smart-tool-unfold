@@ -91,7 +91,7 @@ def test_real_production_author_inspect_and_patch_preserve_presence(backend, tmp
         saved = json.loads((owner.directory/"source/scene.json").read_text())
         assert ("background" in inspected["scene3d"]) == (presence != "absent")
         assert saved["scene3d"] == json.loads(json.dumps(inspected["scene3d"]))
-    assert owner.model_calls == owner.provider_attempts == owner.renders == 0
+    assert owner.renders == 0
 
 
 @pytest.mark.parametrize("tamper", ["index.html", "scene3d_runtime.js", "babylon.js", "scene.json",

@@ -201,8 +201,9 @@ unfold doctor
 
 Only run that redirection for a new dedicated backend directory; it writes a package
 manifest. HyperFrames may prepare its Chromium binary on the first render. Creative
-calls do not run npm or initiate authentication. Amplifier Agent v0.17.0 and provider
-module revisions are pinned; first Agent preparation can fetch its runtime modules.
+calls do not run npm or initiate authentication. The smart extra installs Amplifier
+Agent v0.20.0's public Python binding and its runtime dependencies. Unfold does not
+independently pin or intercept provider modules.
 Production guidance is packaged. No private skills directory is required.
 
 ### Linux renderer prerequisites
@@ -242,8 +243,9 @@ The caller explicitly permits disclosure of brief, context, identity, feedback,
 composition data and sampled generated frames to the chosen model. No unrelated
 filesystem material is available to the embedded agent. This profile requires a
 vision-capable model; a false capability declaration will not make a text-only model
-see images. `Grant` limits calls, tool actions, renders, frames, bytes, response tokens
-and wall time; `unfold schemas` exposes bounds. Models are chosen explicitly; no
+see images. `Grant` limits local tool actions, renders, sampled frames and wall time;
+`unfold schemas` exposes bounds. Inference behavior is owned by Amplifier Agent,
+not private Unfold provider controls. Models are chosen explicitly; no
 model fallback or authentication is initiated. For Gemini, the first nonempty
 `GEMINI_API_KEY`, then `GOOGLE_API_KEY`, wins. Doctor, provider configuration and
 worker environments use that same precedence. OpenAI uses `OPENAI_API_KEY`;
@@ -376,21 +378,28 @@ No automatic paid replay or broad process cleanup is available. Review jobs use
 `call cancel-job` and `call review-state`; their lost-launcher recovery delegates
 to the same operation reconciliation.
 
-`max_response_tokens` is a per-response ceiling. OpenAI calls use non-streaming
-requests with no automatic truncation continuation or raised-token recovery.
-`PROVIDER_INCOMPLETE` ends the operation without committing a revision. Simplify
-its brief or explicitly authorize a new operation; retrying the same request ID
-returns the retained failure. `RESOURCE_LIMIT` can also mean an internal provider
-request was blocked before transmission.
+The former `max_model_calls`, `max_text_bytes`, `max_image_bytes` and
+`max_response_tokens` fields are unsupported. Remove them from old grant/configuration
+files before starting new work; they now produce an actionable validation error,
+not silently ignored limits. Retained scenes and outputs remain usable without
+an agent. This migration does not promise an inference-cost or token ceiling.
 
-`model_call` events count entries through Unfold's model gate. OpenAI additionally
-records `provider_attempt` events before each request, including its token ceiling;
-at most one attempt is permitted per gate call. Revision usage includes
-`provider_attempts` for OpenAI; it is null for other providers, whose internal
-attempts are not measured by this counter. These are attempt counts, not billed
-token usage. Events remain available when an operation fails.
+Unfold uses Amplifier Agent's public sessions, scoped tools and typed image input.
+After sampling, the agent must end its turn; verified JPEGs arrive in the next
+user turn for review (including on Gemini, which does not support tool-result
+images). Submission requires current rendered source and handed-off image evidence.
+A validated submission is still only a candidate until the Agent turn succeeds.
+Failed, rejected or cancelled turns never become success because a tool submitted.
+`agent_terminal` events retain actual turn state, error code/category and reported
+usage; absent usage means unavailable, not zero. Revision usage counts local tool
+actions, renders and sampled frames, not provider requests or billed tokens.
+`RESOURCE_LIMIT` identifies local limits or the operation deadline. Unfold does
+not automatically replay a failed operation; provider-internal behavior is owned
+by Agent. Retry the same request ID to retrieve its retained outcome.
 
-Scene validation errors are repairable within the remaining grant. The first
+Domain validation errors returned by Unfold tools are repairable within the remaining
+local limits. Agent may terminate a turn for arguments that violate the tool's JSON
+schema before invoking Unfold; that terminal failure is retained, not hidden. The first
 three rejected author/patch payloads per operation are retained in local
 `operations/OPERATION/rejected-CALL.json` diagnostics, each capped at 64 KiB, with
 original byte count/hash and a truncation flag. Files are created with owner-only
@@ -550,7 +559,7 @@ version/snapshot, not caller direction. Old pack rules are not concatenated.
 Required pack rules and explicit caller constraints must both be met; conflicting
 hard requirements must be reported as a limitation, not silently resolved by dropping
 either input. No deterministic prose-conflict detector or model compliance is claimed.
-Both channels count against the existing provider disclosure allowance.
+Both channels require the grant's explicit context-disclosure permission.
 
 Historical pack-backed briefs did not distinguish caller text from substituted
 pack guidance. On a NEW continuation, an unmarked pack-backed base gets an empty
@@ -614,7 +623,7 @@ subsequent rendering still performs its normal runtime/source checks.
 
 `Brief(reference_id=asset_id, reference_start=seconds, cues=[...])` permits the
 agent to inspect up to three footage samples relative to the composition, within
-the frame/disclosure allowance. Sampling gaps remain unobserved; no tracking or
+the local frame limit and explicit disclosure permissions. Sampling gaps remain unobserved; no tracking or
 source authentication is claimed. Keep cue statements explicit. Existing footage
 is referenced as input, never treated as proof that illustrative graphics happened.
 

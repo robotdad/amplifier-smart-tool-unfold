@@ -136,7 +136,7 @@ CAPABILITY_HELP = {
         "Resume review and inspect durable job outcomes",
         {},
         "Projects, revisions, drafts, jobs, authority, receipts and events.",
-        "Reconciles interrupted workers but never restarts spending. PROVIDER_INCOMPLETE means OpenAI stopped without automatic continuation or a larger-token retry. Inspect provider_attempt and authoring_rejected events before authorizing a new attempt.",
+        "Reconciles interrupted workers but never restarts spending. Inspect agent_terminal for actual Agent outcomes and reported usage, and authoring_rejected for scene diagnostics. A submitted candidate does not override a failed, rejected or cancelled turn.",
     ),
     "mutation-status": (
         "Read one retained non-model mutation receipt",
